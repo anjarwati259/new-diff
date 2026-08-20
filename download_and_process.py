@@ -13,12 +13,9 @@ DATA_DIR = 'datasets'
 NAME_URL_DICT_UCI = {
     'adult': 'https://archive.ics.uci.edu/static/public/2/adult.zip',
     'default': 'https://archive.ics.uci.edu/static/public/350/default+of+credit+card+clients.zip',
-    'magic': 'https://archive.ics.uci.edu/static/public/159/magic+gamma+telescope.zip',
     'shoppers': 'https://archive.ics.uci.edu/static/public/468/online+shoppers+purchasing+intention+dataset.zip',
     'news': 'https://archive.ics.uci.edu/static/public/332/online+news+popularity.zip',
-    'gesture': 'https://archive.ics.uci.edu/static/public/302/gesture+phase+segmentation.zip',
-    'letter': 'https://archive.ics.uci.edu/static/public/59/letter+recognition.zip',
-    'bean': 'https://archive.ics.uci.edu/static/public/602/dry+bean+dataset.zip'
+    'bike': 'https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip'
 }
 
 def unzip_file(zip_filepath, dest_path):
@@ -105,7 +102,14 @@ def process_adult():
     df_cleaned = data_df.dropna()
     df_cleaned.to_csv(save_path, index = False)
 
+def process_bike():
+    path = f'{DATA_DIR}/bike/hour.csv'
+    save_path = f'{DATA_DIR}/bike/data.csv'
+    data_df = pd.read_csv(path)
+    data_df = data_df.drop(['instant', 'dteday'], axis=1)
 
+    df_cleaned = data_df.dropna()
+    df_cleaned.to_csv(save_path, index = False)
 
 def process_shoppers():
     path = f'{DATA_DIR}/shoppers/online_shoppers_intention.csv'
@@ -142,7 +146,30 @@ def process_bean():
     df_cleaned = data_df.dropna()
     df_cleaned.to_csv(save_path, index = False)
 
-def train_test_split(dataname, ratio = 0.7, mask_prob = 0.3):
+# =============================================================================
+# [MODIFIKASI] train_test_split -> train_val_test_split
+#
+# Alasan perubahan:
+#   Dulu data cuma dibagi 2 (train/test). Sekarang dibagi 3 (train/val/test)
+#   supaya ada validation set khusus buat early stopping / checkpoint
+#   selection saat training model diffusion (lihat main_mrmd.py).
+#
+#   Komposisi default 60:10:30 sengaja dipilih supaya PORSI TEST TETAP 30%,
+#   sama persis dengan skema 70:30 di paper acuan (DiffPuter). Yang berubah
+#   cuma porsi "70% train" di paper itu, sekarang dipecah lagi jadi
+#   60% train-inner + 10% val-inner secara internal. Total train+val = 70%,
+#   identik dengan pool training di paper -> hasil out-of-sample (test) tetap
+#   apple-to-apple buat dibandingkan.
+#
+#   seed tetap SAMA (1234) supaya split ini persis reproducible dan bisa
+#   dipakai bareng-bareng oleh baseline DiffPuter maupun model MRmD kamu --
+#   dua-duanya WAJIB baca dari train.csv/val.csv/test.csv yang sama, bukan
+#   split ulang sendiri-sendiri, biar perbandingannya fair.
+# =============================================================================
+def train_val_test_split(dataname, train_ratio = 0.6, val_ratio = 0.1, test_ratio = 0.3, seed = 1234):
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, \
+        f'train_ratio + val_ratio + test_ratio harus = 1.0, sekarang = {train_ratio + val_ratio + test_ratio}'
+
     data_dir = f'{DATA_DIR}/{dataname}'
     path = f'{DATA_DIR}/{dataname}/data.csv'
     info_path = f'{DATA_DIR}/Info/{dataname}.json'
@@ -166,48 +193,43 @@ def train_test_split(dataname, ratio = 0.7, mask_prob = 0.3):
     else:
         keep_idx = np.arange(total_num)
 
-    num_train = int(keep_idx.shape[0] * ratio)
-    num_test = total_num - num_train
-    seed = 1234
+    n_keep = keep_idx.shape[0]
+    num_train = int(n_keep * train_ratio)
+    num_val   = int(n_keep * val_ratio)
+    # [MODIFIKASI] sisa dialokasikan ke test (bukan dihitung ulang dari ratio)
+    # supaya total train+val+test selalu tepat n_keep, menghindari kehilangan
+    # baris akibat pembulatan int().
+    num_test  = n_keep - num_train - num_val
 
     np.random.seed(seed)
     np.random.shuffle(keep_idx)
 
     train_idx = keep_idx[:num_train]
-    test_idx = keep_idx[-num_test:]
+    val_idx   = keep_idx[num_train : num_train + num_val]
+    test_idx  = keep_idx[num_train + num_val :]
 
     train_df = data_df.loc[train_idx]
-    test_df = data_df.loc[test_idx]        
+    val_df   = data_df.loc[val_idx]
+    test_df  = data_df.loc[test_idx]
 
     train_path = f'{data_dir}/train.csv'
-    test_path = f'{data_dir}/test.csv'
+    val_path   = f'{data_dir}/val.csv'
+    test_path  = f'{data_dir}/test.csv'
 
     train_df.to_csv(train_path, index = False)
+    val_df.to_csv(val_path, index = False)
     test_df.to_csv(test_path, index = False)
 
-    print(f'Spliting Trainig and Testing data for {dataname} is done.')
-    print(f'Training data shape: {train_df.shape}, Testing data shape: {test_df.shape}')
-    print(f'Training data saved at {train_path}, Testing data saved at {test_path}.')
-    
+    print(f'Splitting Train/Val/Test data for {dataname} is done.')
+    print(f'Train data shape: {train_df.shape}, Val data shape: {val_df.shape}, Test data shape: {test_df.shape}')
+    print(f'Ratio realisasi -> train: {len(train_idx)/n_keep:.3f}, '
+          f'val: {len(val_idx)/n_keep:.3f}, test: {len(test_idx)/n_keep:.3f}')
+    print(f'Saved at {train_path}, {val_path}, {test_path}.')
 
-    # train_X = train_df.to_numpy()
-    # test_X = test_df.to_numpy()
-    
-    # X_train = train_X
-    # X_test = test_X
+    # Catatan: generate mask (train_mask/val_mask/test_mask) sekarang
+    # dilakukan lewat generate_mask() di generate_mask.py (dipanggil di
+    # blok __main__ di bawah), bukan di sini.
 
-    # os.makedirs(f'{data_dir}/masks/MCAR') if not os.path.exists(f'{data_dir}/masks/MCAR') else None
-    # for cross_idx in range(10):
-    #     np.random.seed(cross_idx) 
-
-    #     mask_train = np.random.rand(*X_train.shape) < mask_prob
-    #     mask_test = np.random.rand(*X_test.shape) < mask_prob
-        
-    #     np.save(f'{data_dir}/masks/MCAR/train_mask_{cross_idx}.npy', mask_train)
-    #     np.save(f'{data_dir}/masks/MCAR/test_mask_{cross_idx}.npy', mask_test)
-
-    # print(dataname, mask_train.shape, train_X.shape, test_X.shape, len(num_idx), len(cat_idx))
-    
 
 if __name__ == '__main__':
 
@@ -217,7 +239,8 @@ if __name__ == '__main__':
 
     for name in NAME_URL_DICT_UCI.keys():
         eval(f'process_{name}()')
-        train_test_split(name, ratio = 0.7, mask_prob = 0.3)
+        # [MODIFIKASI] train_test_split(ratio=0.7) -> train_val_test_split(60:10:30)
+        train_val_test_split(name, train_ratio = 0.65, val_ratio = 0.15, test_ratio = 0.2)
         for mask_type in ['MCAR', 'MAR', 'MNAR_logistic_T2']:
             for mask_p in [0.3]:
                 
@@ -226,13 +249,3 @@ if __name__ == '__main__':
                                 mask_num = 10,
                                 p = mask_p,
                                 )
-    
-    name = 'california'
-    for mask_type in ['MCAR', 'MAR', 'MNAR_logistic_T2']:
-        for mask_p in [0.3]:
-            
-            generate_mask(dataname = name,
-                            mask_type = mask_type,
-                            mask_num = 10,
-                            p = mask_p,
-                            )

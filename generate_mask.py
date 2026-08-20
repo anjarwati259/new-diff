@@ -24,6 +24,11 @@ Note:
 the returned data's column order is the same as the original data column order 
 
 '''
+# =============================================================================
+# [MODIFIKASI] load_dataset sekarang juga baca val.csv dan mengembalikan
+# val_X (di antara train_X dan test_X). Logika encoding (cat/target idx)
+# tidak diubah -- cuma diduplikasi supaya berlaku juga untuk split val.
+# =============================================================================
 def load_dataset(dataname, idx = 0):
     data_dir = f'{DATA_DIR}/{dataname}'
 
@@ -38,10 +43,12 @@ def load_dataset(dataname, idx = 0):
 
     data_path = f'{data_dir}/data.csv'
     train_path = f'{data_dir}/train.csv'
+    val_path = f'{data_dir}/val.csv'      # [BARU]
     test_path = f'{data_dir}/test.csv'
 
     data_df = pd.read_csv(data_path)
     train_df = pd.read_csv(train_path)
+    val_df = pd.read_csv(val_path)        # [BARU]
     test_df = pd.read_csv(test_path)
 
     cols = train_df.columns
@@ -54,6 +61,10 @@ def load_dataset(dataname, idx = 0):
     train_cat = train_df[cols[cat_col_idx]].astype(str)
     train_y = train_df[cols[target_col_idx]]
 
+    val_num = val_df[cols[num_col_idx]].values.astype(np.float32)   # [BARU]
+    val_cat = val_df[cols[cat_col_idx]].astype(str)                 # [BARU]
+    val_y = val_df[cols[target_col_idx]]                             # [BARU]
+
     test_num = test_df[cols[num_col_idx]].values.astype(np.float32)
     test_cat = test_df[cols[cat_col_idx]].astype(str)
     test_y = test_df[cols[target_col_idx]]
@@ -61,7 +72,7 @@ def load_dataset(dataname, idx = 0):
     cat_columns = data_cat.columns
     target_columns = data_y.columns
 
-    train_cat_idx, test_cat_idx = None, None
+    train_cat_idx, val_cat_idx, test_cat_idx = None, None, None
 
     # Save target idx for target columns
     if len(target_col_idx) != 0 and not is_numeric_dtype(data_y[target_columns[0]]): 
@@ -84,6 +95,7 @@ def load_dataset(dataname, idx = 0):
                     json.dump(category_to_idx, f) 
     
         train_target_idx = []
+        val_target_idx = []     # [BARU]
         test_target_idx = []
                 
         for column in target_columns:
@@ -93,17 +105,21 @@ def load_dataset(dataname, idx = 0):
                 category_to_idx = json.load(f)
                 
             train_target_idx_i = train_y[column].map(category_to_idx).to_numpy().astype(np.float32)
+            val_target_idx_i = val_y[column].map(category_to_idx).to_numpy().astype(np.float32)   # [BARU]
             test_target_idx_i = test_y[column].map(category_to_idx).to_numpy().astype(np.float32)
             
             train_target_idx.append(train_target_idx_i)
+            val_target_idx.append(val_target_idx_i)   # [BARU]
             test_target_idx.append(test_target_idx_i)
         
         train_target_idx = np.stack(train_target_idx, axis = 1)
+        val_target_idx = np.stack(val_target_idx, axis = 1)     # [BARU]
         test_target_idx = np.stack(test_target_idx, axis = 1)
     
     else:
         #abuse notation, if the target column is numeric, we still use call it target_idx
         train_target_idx = train_y.to_numpy().astype(np.float32)
+        val_target_idx = val_y.to_numpy().astype(np.float32)     # [BARU]
         test_target_idx = test_y.to_numpy().astype(np.float32)
     
     # ========================================================
@@ -129,6 +145,7 @@ def load_dataset(dataname, idx = 0):
     
             
     train_cat_idx = []
+    val_cat_idx = []    # [BARU]
     test_cat_idx = []
             
     for column in cat_columns:
@@ -138,9 +155,11 @@ def load_dataset(dataname, idx = 0):
             category_to_idx = json.load(f)
             
         train_cat_idx_i = train_cat[column].map(category_to_idx).to_numpy().astype(np.float32)
+        val_cat_idx_i = val_cat[column].map(category_to_idx).to_numpy().astype(np.float32)    # [BARU]
         test_cat_idx_i = test_cat[column].map(category_to_idx).to_numpy().astype(np.float32)
         
         train_cat_idx.append(train_cat_idx_i)
+        val_cat_idx.append(val_cat_idx_i)    # [BARU]
         test_cat_idx.append(test_cat_idx_i)
 
     # Four situations:
@@ -152,43 +171,53 @@ def load_dataset(dataname, idx = 0):
 
         if len(cat_col_idx) == 0:
             train_X = train_num
+            val_X = val_num       # [BARU]
             test_X = test_num
             
             #rearange the column order
             train_X = train_X[:, num_col_idx]
+            val_X = val_X[:, num_col_idx]     # [BARU]
             test_X = test_X[:, num_col_idx]
         else:
             train_cat_idx = np.stack(train_cat_idx, axis = 1)
+            val_cat_idx = np.stack(val_cat_idx, axis = 1)     # [BARU]
             test_cat_idx = np.stack(test_cat_idx, axis = 1)
 
             train_X = np.concatenate([train_num, train_cat_idx], axis = 1)
+            val_X = np.concatenate([val_num, val_cat_idx], axis = 1)      # [BARU]
             test_X = np.concatenate([test_num, test_cat_idx], axis = 1)
 
             #rearange the column order
             train_X = train_X[:, np.concatenate([num_col_idx, cat_col_idx])]
+            val_X = val_X[:, np.concatenate([num_col_idx, cat_col_idx])]      # [BARU]
             test_X = test_X[:, np.concatenate([num_col_idx, cat_col_idx])]
     
     else:
         if len(cat_col_idx) == 0:
             train_X = np.concatenate([train_num, train_target_idx], axis = 1)
+            val_X = np.concatenate([val_num, val_target_idx], axis = 1)      # [BARU]
             test_X = np.concatenate([test_num, test_target_idx], axis = 1)
 
             #rearange the column order
             train_X = train_X[:, np.concatenate([num_col_idx, target_col_idx])]
+            val_X = val_X[:, np.concatenate([num_col_idx, target_col_idx])]      # [BARU]
             test_X = test_X[:, np.concatenate([num_col_idx, target_col_idx])]
             
         else:
             train_cat_idx = np.stack(train_cat_idx, axis = 1)
+            val_cat_idx = np.stack(val_cat_idx, axis = 1)      # [BARU]
             test_cat_idx = np.stack(test_cat_idx, axis = 1)
             
             train_X = np.concatenate([train_num, train_cat_idx, train_target_idx], axis = 1)
+            val_X = np.concatenate([val_num, val_cat_idx, val_target_idx], axis = 1)      # [BARU]
             test_X = np.concatenate([test_num, test_cat_idx, test_target_idx], axis = 1)
 
             #rearange the column order
             train_X = train_X[:, np.concatenate([num_col_idx, cat_col_idx, target_col_idx])]
+            val_X = val_X[:, np.concatenate([num_col_idx, cat_col_idx, target_col_idx])]      # [BARU]
             test_X = test_X[:, np.concatenate([num_col_idx, cat_col_idx, target_col_idx])]
         
-    return train_X, test_X
+    return train_X, val_X, test_X   # [MODIFIKASI] tambah val_X
     
 
 #### Quantile ######
@@ -495,10 +524,18 @@ def fit_intercepts(X, coeffs, p, self_mask=False):
     return intercepts
 
 
+# =============================================================================
+# [MODIFIKASI] generate_mask sekarang juga generate val_mask, dengan
+# mekanisme masking yang SAMA PERSIS (MCAR/MAR/MNAR, p & q sama) seperti
+# yang dipakai untuk train_mask & test_mask. Ini penting supaya val set
+# punya missing-value simulation yang konsisten dengan train/test, dan
+# supaya baseline DiffPuter & model MRmD kamu memakai mask val yang identik
+# (dibaca dari file yang sama, bukan digenerate ulang tiap run).
+# =============================================================================
 def generate_mask(dataname, mask_type, p, mask_num, reproduce=True):
 
 
-    train_X, test_X = load_dataset(dataname)
+    train_X, val_X, test_X = load_dataset(dataname)   # [MODIFIKASI] tambah val_X
     print('missing probability:', p)
 
     #p = p / (1 - 0.3) # 30% will held out and not missing, so we need to adjust the missing probability 
@@ -511,12 +548,15 @@ def generate_mask(dataname, mask_type, p, mask_num, reproduce=True):
             #train_mask = (torch.rand(train_X.shape) < p).numpy()
             #test_mask = (torch.rand(test_X.shape) < p).numpy()
             train_mask = np.random.rand(*train_X.shape) < p
+            val_mask = np.random.rand(*val_X.shape) < p     # [BARU]
             test_mask = np.random.rand(*test_X.shape) < p
         elif mask_type == 'MAR':
             train_mask = MAR_mask(train_X, p=p/(1-q), p_obs=q)
+            val_mask = MAR_mask(val_X, p=p/(1-q), p_obs=q)     # [BARU]
             test_mask = MAR_mask(test_X, p=p/(1-q), p_obs=q)
         elif mask_type == 'MNAR_logistic_T2':
             train_mask = MNAR_mask_logistic(train_X, p=p, p_params=q, exclude_inputs=True)
+            val_mask = MNAR_mask_logistic(val_X, p=p, p_params=q, exclude_inputs=True)     # [BARU]
             test_mask = MNAR_mask_logistic(test_X, p=p, p_params=q, exclude_inputs=True)
         # elif mask_type == 'MNAR_logistic_T1':
         #     train_mask = MNAR_mask_logistic(train_X, p=0.3, p_obs=0.3, exclude_inputs=False)
@@ -541,18 +581,21 @@ def generate_mask(dataname, mask_type, p, mask_num, reproduce=True):
             os.makedirs(data_dir)
         
         train_mask_path = f'{data_dir}/train_mask_{mask_idx}.npy'
+        val_mask_path = f'{data_dir}/val_mask_{mask_idx}.npy'     # [BARU]
         test_mask_path = f'{data_dir}/test_mask_{mask_idx}.npy'
         
         # If exist, pass
-        if os.path.exists(train_mask_path) and os.path.exists(test_mask_path) and not reproduce:
+        if (os.path.exists(train_mask_path) and os.path.exists(val_mask_path)
+                and os.path.exists(test_mask_path) and not reproduce):
             print(f'Masks already exist at {train_mask_path}')
             continue
         
-        # Save train/test masks
+        # Save train/val/test masks
         np.save(train_mask_path, train_mask)
+        np.save(val_mask_path, val_mask)     # [BARU]
         np.save(test_mask_path, test_mask)
 
-        print(f'Saved train mask to {train_mask_path}')
+        print(f'Saved train/val/test mask to {data_dir} (idx={mask_idx})')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MAR and MNAR mask generation.')

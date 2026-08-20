@@ -1,0 +1,6 @@
+{
+    "name": "bike",
+    "num_col_idx": [8, 9, 10, 11, 12, 13],
+    "cat_col_idx": [0, 1, 2, 3, 4, 5, 6, 7],
+    "target_col_idx": [14]
+}
