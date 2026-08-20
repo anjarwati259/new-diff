@@ -7,6 +7,24 @@ import json
 
 DATA_DIR = 'datasets'
 
+# =============================================================================
+# [MODIFIKASI] load_dataset sekarang juga baca val.csv & val_mask, sehingga
+# mengembalikan 3-way split (train/val/test), bukan cuma train/test.
+#
+# Peran tiap split TIDAK berubah maknanya:
+#   - train : dipakai untuk update parameter model (backprop)
+#   - val   : TIDAK dipakai untuk backprop, hanya untuk memantau val_loss
+#             tiap epoch -> dipakai sebagai dasar checkpoint selection /
+#             early stopping (lihat main_base.py)
+#   - test  : sama sekali tidak disentuh selama training/checkpoint
+#             selection, dipakai di akhir untuk evaluasi out-of-sample
+#
+# Pola penambahan val ini konsisten dengan yang sudah dilakukan di
+# generate_mask.py / dataset_mrmd.py: val diambil dari file val.csv dan
+# val_mask_{idx}.npy yang sudah displit di awal, BUKAN di-random ulang di
+# sini -- supaya baseline ini dan model MRmD kamu memakai baris & posisi
+# missing yang identik untuk val.
+# =============================================================================
 def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
     data_dir = f'datasets/{dataname}'
     info_path = f'datasets/Info/{dataname}.json'
@@ -20,17 +38,21 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
 
     data_path = f'{data_dir}/data.csv'
     train_path = f'{data_dir}/train.csv'
+    val_path = f'{data_dir}/val.csv'      # [BARU]
     test_path = f'{data_dir}/test.csv'
 
     train_mask_path = f'{data_dir}/masks/rate{ratio}/{mask_type}/train_mask_{idx}.npy'
+    val_mask_path = f'{data_dir}/masks/rate{ratio}/{mask_type}/val_mask_{idx}.npy'    # [BARU]
     test_mask_path = f'{data_dir}/masks/rate{ratio}/{mask_type}/test_mask_{idx}.npy'
 
     data_df = pd.read_csv(data_path)
     train_df = pd.read_csv(train_path)
+    val_df = pd.read_csv(val_path)        # [BARU]
     test_df = pd.read_csv(test_path)
 
 
     train_mask = np.load(train_mask_path)
+    val_mask = np.load(val_mask_path)     # [BARU]
     test_mask = np.load(test_mask_path)
 
     cols = train_df.columns
@@ -43,6 +65,9 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
     train_cat = train_df[cols[cat_col_idx]].astype(str)
     train_y = train_df[cols[target_col_idx]]
 
+    val_num = val_df[cols[num_col_idx]].values.astype(np.float32)    # [BARU]
+    val_cat = val_df[cols[cat_col_idx]].astype(str)                  # [BARU]
+    val_y = val_df[cols[target_col_idx]]                              # [BARU]
 
     test_num = test_df[cols[num_col_idx]].values.astype(np.float32)
     test_cat = test_df[cols[cat_col_idx]].astype(str)
@@ -50,8 +75,9 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
     
     cat_columns = data_cat.columns
 
-    train_cat_idx, test_cat_idx = None, None
+    train_cat_idx, val_cat_idx, test_cat_idx = None, None, None    # [MODIFIKASI]
     extend_train_mask = None
+    extend_val_mask = None      # [BARU]
     extend_test_mask = None
     cat_bin_num = None
 
@@ -60,9 +86,11 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
 
     if len(cat_col_idx) == 0:
         train_X = train_num
+        val_X = val_num       # [BARU]
         test_X = test_num
 
         extend_train_mask = train_mask[:, num_col_idx]
+        extend_val_mask = val_mask[:, num_col_idx]     # [BARU]
         extend_test_mask = test_mask[:, num_col_idx]
 
     # Contain both numerical and categorical features
@@ -82,18 +110,17 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
                 category_to_binary = {category: format(index, '0' + str(num_bits) + 'b') for index, category in enumerate(categories)}
                 category_to_idx = {category: index for index, category in enumerate(categories)}
 
-            #     for category, binary_encoding in category_to_binary.items():
-            #         print(f'{category}: {binary_encoding}')
-
                 with open(map_path_bin, 'w') as f:
                     json.dump(category_to_binary, f)
                 with open(map_path_idx, 'w') as f:
                     json.dump(category_to_idx, f)
 
         train_cat_bin = []
+        val_cat_bin = []     # [BARU]
         test_cat_bin = []
 
         train_cat_idx = []
+        val_cat_idx = []     # [BARU]
         test_cat_idx = []
         cat_bin_num = []
                 
@@ -110,30 +137,41 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
             train_cat_idx_i = train_cat[column].map(category_to_idx).to_numpy().astype(np.int64)
             train_cat_bin_i = np.array([list(map(int, binary)) for binary in train_cat_enc_i])
 
+            val_cat_enc_i = val_cat[column].map(category_to_binary).to_numpy()                       # [BARU]
+            val_cat_idx_i = val_cat[column].map(category_to_idx).to_numpy().astype(np.int64)          # [BARU]
+            val_cat_bin_i = np.array([list(map(int, binary)) for binary in val_cat_enc_i])             # [BARU]
+
             test_cat_enc_i = test_cat[column].map(category_to_binary).to_numpy()
             test_cat_idx_i = test_cat[column].map(category_to_idx).to_numpy().astype(np.int64)
             test_cat_bin_i = np.array([list(map(int, binary)) for binary in test_cat_enc_i])
 
             train_cat_bin.append(train_cat_bin_i)
+            val_cat_bin.append(val_cat_bin_i)     # [BARU]
             test_cat_bin.append(test_cat_bin_i)
             
             train_cat_idx.append(train_cat_idx_i)
+            val_cat_idx.append(val_cat_idx_i)     # [BARU]
             test_cat_idx.append(test_cat_idx_i)
             cat_bin_num.append(train_cat_bin_i.shape[1])
                 
         train_cat_bin = np.concatenate(train_cat_bin, axis = 1).astype(np.float32)
+        val_cat_bin = np.concatenate(val_cat_bin, axis = 1).astype(np.float32)     # [BARU]
         test_cat_bin = np.concatenate(test_cat_bin, axis = 1).astype(np.float32)
 
         train_cat_idx = np.stack(train_cat_idx, axis = 1)
+        val_cat_idx = np.stack(val_cat_idx, axis = 1)     # [BARU]
         test_cat_idx = np.stack(test_cat_idx, axis = 1)
 
         cat_bin_num = np.array(cat_bin_num)
 
         train_X = np.concatenate([train_num, train_cat_bin], axis = 1)
+        val_X = np.concatenate([val_num, val_cat_bin], axis = 1)     # [BARU]
         test_X = np.concatenate([test_num, test_cat_bin], axis = 1)
 
         train_num_mask = train_mask[:, num_col_idx]
         train_cat_mask = train_mask[:, cat_col_idx]
+        val_num_mask = val_mask[:, num_col_idx]     # [BARU]
+        val_cat_mask = val_mask[:, cat_col_idx]     # [BARU]
         test_num_mask = test_mask[:, num_col_idx]
         test_cat_mask = test_mask[:, cat_col_idx]
 
@@ -151,12 +189,22 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
             return result
 
         train_cat_mask = extend_mask(train_cat_mask, cat_bin_num)
+        val_cat_mask = extend_mask(val_cat_mask, cat_bin_num)     # [BARU]
         test_cat_mask = extend_mask(test_cat_mask, cat_bin_num)
 
         extend_train_mask = np.concatenate([train_num_mask, train_cat_mask], axis = 1)
+        extend_val_mask = np.concatenate([val_num_mask, val_cat_mask], axis = 1)     # [BARU]
         extend_test_mask = np.concatenate([test_num_mask, test_cat_mask], axis = 1)
 
-    return train_X, test_X, train_mask, test_mask, train_num, test_num, train_cat_idx, test_cat_idx, extend_train_mask, extend_test_mask, cat_bin_num
+    # [MODIFIKASI] urutan return: setiap kelompok variabel (X, mask mentah,
+    # num, cat_idx, extend_mask) sekarang berisi 3 nilai (train, val, test),
+    # bukan 2 (train, test) seperti sebelumnya.
+    return (train_X, val_X, test_X,
+            train_mask, val_mask, test_mask,
+            train_num, val_num, test_num,
+            train_cat_idx, val_cat_idx, test_cat_idx,
+            extend_train_mask, extend_val_mask, extend_test_mask,
+            cat_bin_num)
 
 def mean_std(data, mask):
     mask = ~mask
@@ -168,39 +216,134 @@ def mean_std(data, mask):
     std = np.sqrt(var)
     return mean, std
 
-def get_eval(dataname, X_recon, X_true, truth_cat_idx, num_num, cat_bin_num, mask, oos = False):
 
-    data_dir = f'datasets/{dataname}'
+def _bits_to_int(bits):
+    """
+    Konversi array binary bits ke integer.
+    Ekuivalen dengan argmax pada one-hot, tapi untuk binary encoding.
+
+    Contoh:
+        bits = [0, 1, 1]  →  0*4 + 1*2 + 1*1 = 3
+        bits = [1, 0, 0]  →  1*4 + 0*2 + 0*1 = 4
+
+    Parameter:
+        bits : np.ndarray, shape (N, b) — nilai kontinu hasil prediksi model
+                                          (belum di-round, range bebas)
+
+    Return:
+        idx  : np.ndarray, shape (N,) — integer label hasil decoding
+    """
+    b = bits.shape[1]
+    # Round ke 0/1 terlebih dahulu (sesuai semangat argmax: pilih nilai terbesar/terkecil)
+    bits_rounded = (bits > 0.5).astype(np.int32)
+
+    # Bobot posisi bit: [2^(b-1), 2^(b-2), ..., 2^0]
+    powers = (2 ** np.arange(b - 1, -1, -1)).astype(np.int32)  # shape (b,)
+
+    # Dot product → integer index per baris
+    idx = bits_rounded.dot(powers)  # shape (N,)
+    return idx
+
+
+def get_eval(dataname, X_recon, X_true, truth_cat_idx, num_num, cat_bin_num, mask, oos=False):
+    """
+    Menghitung MAE, RMSE (untuk kolom numerik), dan Accuracy (untuk kolom kategorik)
+    hanya pada posisi missing (mask == True).
+
+    [MODIFIKASI] Fungsi ini TIDAK diubah logikanya sama sekali -- sengaja
+    dipertahankan generik (menerima X_recon/X_true/mask apa saja) supaya
+    bisa dipanggil untuk in-sample (train), validation, MAUPUN out-of-sample
+    (test) tanpa duplikasi kode. Untuk validation, panggil dengan oos=False
+    (khusus dataset 'news' baris drop cuma berlaku untuk test/oos=True).
+
+    Logika Accuracy:
+    ----------------
+    Paper menyebutkan "argmax" setelah one-hot decoding. Karena implementasi ini
+    memakai binary encoding (bukan one-hot), maka padanannya adalah:
+
+        1. Round prediksi bit ke 0/1  →  binary string hasil prediksi
+        2. Konversi binary → integer  →  predicted label index
+        3. Bandingkan dengan ground-truth label index (truth_cat_idx)
+
+    Ini sepenuhnya deterministik dan tidak bergantung pada distribusi prediksi,
+    sehingga konsisten dengan semangat argmax di paper.
+    """
 
     info_path = f'datasets/Info/{dataname}.json'
-
     with open(info_path, 'r') as f:
         info = json.load(f)
-    
+
     num_col_idx = info['num_col_idx']
     cat_col_idx = info['cat_col_idx']
 
+    # True(1) = missing, False(0) = observed
     num_mask = mask[:, num_col_idx].astype(bool)
-    cat_mask = mask[:, cat_col_idx].astype(bool)
+    cat_mask = mask[:, cat_col_idx].astype(bool) if len(cat_col_idx) > 0 else None
 
     num_pred = X_recon[:, :num_num]
-    cat_pred = X_recon[:, num_num:]
-
-    num_cat = len(cat_col_idx)
+    cat_pred_bits = X_recon[:, num_num:]
 
     num_true = X_true[:, :num_num]
-    cat_true = truth_cat_idx
 
-    if dataname == 'news' and oos == True:
-        num_mask = np.delete(num_mask, 6265, axis=0)
-        num_pred = np.delete(num_pred, 6265, axis=0)
-        num_true = np.delete(num_true, 6265, axis=0)
+    # Special-case: buang 1 baris di news oos agar dimensi align
+    if dataname == 'news' and oos is True:
+        drop = 6265
+        num_mask = np.delete(num_mask, drop, axis=0)
+        num_pred = np.delete(num_pred, drop, axis=0)
+        num_true = np.delete(num_true, drop, axis=0)
+        if cat_mask is not None:
+            cat_mask = np.delete(cat_mask, drop, axis=0)
+        if truth_cat_idx is not None:
+            truth_cat_idx = np.delete(truth_cat_idx, drop, axis=0)
+        cat_pred_bits = np.delete(cat_pred_bits, drop, axis=0)
 
+    # ===== Continuous metrics: hanya pada posisi missing =====
     div = num_pred[num_mask] - num_true[num_mask]
-    mae = np.abs(div).mean()
-    rmse = np.sqrt((div**2).mean())
-        
-    mae = np.abs(div).mean()
-    rmse = np.sqrt((div**2).mean())
+    mae  = np.abs(div).mean()
+    rmse = np.sqrt((div ** 2).mean())
 
-    return mae, rmse
+    # ===== Discrete metric: Accuracy hanya pada posisi missing =====
+    acc = np.nan
+    if (truth_cat_idx is not None) and (len(cat_col_idx) > 0) and (cat_bin_num is not None):
+
+        cat_bin_num = np.array(cat_bin_num).astype(int)
+        ends   = np.cumsum(cat_bin_num)
+        starts = np.concatenate(([0], ends[:-1]))
+
+        correct_total = 0
+        total_missing = 0
+
+        for j, (s, e) in enumerate(zip(starts, ends)):
+
+            rows_miss = cat_mask[:, j]          # boolean mask baris yang missing
+            if rows_miss.sum() == 0:
+                continue
+
+            # Prediksi bit untuk kolom kategorik ke-j
+            pred_bits = cat_pred_bits[:, s:e]           # shape (N, b)
+
+            # Ground-truth label index
+            true_idx = truth_cat_idx[:, j].astype(int)  # shape (N,)
+
+            # ===========================================================
+            # ARGMAX via binary decoding (pengganti argmax one-hot):
+            #   round bit prediksi → 0/1, lalu ubah ke integer
+            # ===========================================================
+            pred_idx = _bits_to_int(pred_bits)           # shape (N,)
+
+            # Clamp: jika hasil decoding melebihi jumlah kelas valid,
+            # anggap sebagai prediksi salah (tidak di-assign ke kelas manapun)
+            nclass = int(true_idx.max()) + 1
+            pred_idx = np.clip(pred_idx, 0, nclass - 1)
+
+            # Hitung correct hanya pada baris yang missing
+            correct = ((pred_idx == true_idx) & rows_miss).sum()
+            total   = rows_miss.sum()
+
+            correct_total += int(correct)
+            total_missing += int(total)
+
+        if total_missing > 0:
+            acc = correct_total / total_missing
+
+    return mae, rmse, acc
