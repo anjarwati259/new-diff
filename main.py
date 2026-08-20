@@ -30,7 +30,7 @@ parser.add_argument('--num_steps', type=int, default=20, help='Number of diffusi
 # True  -> hasil imputasi tiap iterasi disimpan sebagai file .csv
 # False -> hasil imputasi TIDAK disimpan (default, tidak ada perubahan perilaku lama)
 parser.add_argument('--save_imputation', type=lambda x: str(x).lower() in ('true', '1', 'yes'),
-                     default=False, help='Simpan hasil imputasi train/val/test ke CSV (True/False).')
+                     default=True, help='Simpan hasil imputasi train/val/test ke CSV (True/False).')
 
 args = parser.parse_args()
 
