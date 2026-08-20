@@ -206,6 +206,125 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
             extend_train_mask, extend_val_mask, extend_test_mask,
             cat_bin_num)
 
+def load_meta(dataname):
+    """
+    [BARU] Load metadata (nama kolom asli + info.json + target asli) yang
+    dibutuhkan untuk menulis hasil imputasi ke CSV dengan nama & urutan
+    kolom yang sama seperti dataset aslinya.
+
+    Sengaja dibuat sebagai fungsi terpisah (bukan menambah return value di
+    load_dataset) supaya signature load_dataset yang sudah dipakai di
+    banyak tempat (main.py, dataset_mrmd.py, dll) tidak berubah.
+    """
+    data_dir = f'datasets/{dataname}'
+    info_path = f'datasets/Info/{dataname}.json'
+
+    with open(info_path, 'r') as f:
+        info = json.load(f)
+
+    train_df = pd.read_csv(f'{data_dir}/train.csv')
+    val_df = pd.read_csv(f'{data_dir}/val.csv')
+    test_df = pd.read_csv(f'{data_dir}/test.csv')
+
+    cols = train_df.columns
+    target_col_idx = info['target_col_idx']
+
+    train_y = train_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
+    val_y = val_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
+    test_y = test_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
+
+    return {
+        'cols': cols,
+        'num_col_idx': info['num_col_idx'],
+        'cat_col_idx': info['cat_col_idx'],
+        'target_col_idx': target_col_idx,
+        'train_y': train_y,
+        'val_y': val_y,
+        'test_y': test_y,
+    }
+
+
+def save_imputed_csv(save_path, dataname, X_pred, num_col_idx, cat_col_idx,
+                      target_col_idx, cols, cat_bin_num, y=None):
+    """
+    [BARU] Simpan hasil imputasi ke file CSV dengan nama & urutan kolom
+    sama seperti dataset asli.
+
+    Parameter:
+        save_path      : path file csv tujuan (folder induk akan dibuat
+                          otomatis kalau belum ada)
+        dataname        : nama dataset (dipakai untuk load map kategori)
+        X_pred          : hasil imputasi yang SUDAH didenormalisasi,
+                           shape (N, num_num + sum(cat_bin_num))
+                           -> kolom numerik dulu, baru kolom kategorik
+                           (binary-encoded), persis format train_X/val_X/test_X
+        num_col_idx     : list index kolom numerik (dari info.json)
+        cat_col_idx     : list index kolom kategorik (dari info.json)
+        target_col_idx  : list index kolom target (dari info.json)
+        cols            : daftar nama kolom dataset asli (train_df.columns)
+        cat_bin_num     : jumlah bit per kolom kategorik (hasil load_dataset)
+        y               : nilai target asli (N, len(target_col_idx)) kalau
+                           mau ikut disimpan; None kalau tidak
+
+    Kolom kategorik di-decode balik dari binary bits -> integer index ->
+    label kategori asli, memakai file <kolom>_map_idx.json yang sudah
+    dibuat oleh load_dataset (mapping category -> index, di-reverse di sini).
+    """
+    data_dir = f'datasets/{dataname}'
+    num_num = len(num_col_idx)
+
+    result = {}
+
+    # ----- kolom numerik: langsung dipakai (sudah didenormalisasi) -----
+    for i, col_idx in enumerate(num_col_idx):
+        col_name = cols[col_idx]
+        result[col_name] = X_pred[:, i]
+
+    # ----- kolom kategorik: decode bits -> idx -> label asli -----
+    if len(cat_col_idx) > 0 and cat_bin_num is not None:
+        cat_bin_num = np.array(cat_bin_num).astype(int)
+        ends = np.cumsum(cat_bin_num)
+        starts = np.concatenate(([0], ends[:-1]))
+        cat_pred_bits = X_pred[:, num_num:]
+
+        for j, col_idx in enumerate(cat_col_idx):
+            col_name = cols[col_idx]
+            map_path_idx = f'{data_dir}/{col_name}_map_idx.json'
+
+            with open(map_path_idx, 'r') as f:
+                category_to_idx = json.load(f)
+            idx_to_category = {v: k for k, v in category_to_idx.items()}
+
+            s, e = starts[j], ends[j]
+            pred_idx_j = _bits_to_int(cat_pred_bits[:, s:e])
+
+            nclass = len(category_to_idx)
+            pred_idx_j = np.clip(pred_idx_j, 0, nclass - 1)
+
+            result[col_name] = [idx_to_category.get(int(i), None) for i in pred_idx_j]
+
+    # ----- kolom target (opsional, tidak diimputasi, tinggal disalin) -----
+    if y is not None and len(target_col_idx) > 0:
+        y = np.asarray(y)
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+        for i, col_idx in enumerate(target_col_idx):
+            result[cols[col_idx]] = y[:, i]
+
+    df = pd.DataFrame(result)
+
+    # urutkan kolom sesuai urutan aslinya di dataset
+    all_idx = list(num_col_idx) + list(cat_col_idx)
+    if y is not None:
+        all_idx += list(target_col_idx)
+    ordered_cols = [cols[i] for i in sorted(all_idx) if cols[i] in df.columns]
+    df = df[ordered_cols]
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    df.to_csv(save_path, index=False)
+    print(f'[INFO] Hasil imputasi disimpan ke {save_path}')
+
+
 def mean_std(data, mask):
     mask = ~mask
     mask = mask.astype(np.float32)

@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset import load_dataset, get_eval, mean_std
+from dataset import load_dataset, get_eval, mean_std, load_meta, save_imputed_csv
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -26,6 +26,11 @@ parser.add_argument('--hid_dim', type=int, default=1024, help='Hidden dimension.
 parser.add_argument('--mask', type=str, default='MCAR', help='Masking machenisms.')
 parser.add_argument('--num_trials', type=int, default=2, help='Number of sampling times.')
 parser.add_argument('--num_steps', type=int, default=20, help='Number of diffusion steps.')
+# [BARU] Opsi untuk menyimpan hasil imputasi (train/val/test) ke CSV.
+# True  -> hasil imputasi tiap iterasi disimpan sebagai file .csv
+# False -> hasil imputasi TIDAK disimpan (default, tidak ada perubahan perilaku lama)
+parser.add_argument('--save_imputation', type=lambda x: str(x).lower() in ('true', '1', 'yes'),
+                     default=True, help='Simpan hasil imputasi train/val/test ke CSV (True/False).')
 
 args = parser.parse_args()
 
@@ -64,6 +69,10 @@ if __name__ == '__main__':
      train_cat_idx, val_cat_idx, test_cat_idx,
      train_mask, val_mask, test_mask,   # ini extend_*_mask (bit-level), sama seperti pola nama asli
      cat_bin_num) = load_dataset(dataname, split_idx, mask_type, ratio)
+
+    # [BARU] Metadata (nama kolom asli + target asli) hanya dibutuhkan kalau
+    # kita mau menyimpan hasil imputasi ke CSV.
+    meta = load_meta(dataname) if args.save_imputation else None
 
     # mean & std HANYA dihitung dari train (observed entries) -> tidak ada
     # kebocoran informasi dari val atau test ke proses normalisasi.
@@ -134,6 +143,13 @@ if __name__ == '__main__':
      
         ckpt_dir = f'ckpt/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
         os.makedirs(f'{ckpt_dir}/{iteration}', exist_ok=True)
+
+        # [MODIFIKASI] result_save_path dipindah ke awal loop (sebelumnya
+        # dibuat di akhir loop) supaya sudah tersedia saat kita mau
+        # menyimpan hasil imputasi (train/val/test) ke CSV di tengah proses,
+        # bukan hanya dipakai untuk result.txt di akhir iterasi.
+        result_save_path = f'results/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
+        os.makedirs(result_save_path, exist_ok=True)
 
         print(f'iteration: {iteration}')
         print(ckpt_dir)
@@ -302,7 +318,21 @@ if __name__ == '__main__':
         MAEs.append(mae)
         RMSEs.append(rmse)
         ACCs.append(acc)
-        
+
+        # [BARU] Simpan hasil imputasi train ke CSV kalau --save_imputation True
+        if args.save_imputation:
+            save_imputed_csv(
+                save_path=f'{result_save_path}/imputed_train_iter{iteration}.csv',
+                dataname=dataname,
+                X_pred=pred_X,
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['train_y'],
+            )
+
         impute_end_time = time.time()
         print(f'In-sample imputation time: {impute_end_time - impute_start_time:.2f} seconds')
 
@@ -358,6 +388,20 @@ if __name__ == '__main__':
         RMSEs_val.append(rmse_val)
         ACCs_val.append(acc_val)
 
+        # [BARU] Simpan hasil imputasi validation ke CSV kalau --save_imputation True
+        if args.save_imputation:
+            save_imputed_csv(
+                save_path=f'{result_save_path}/imputed_val_iter{iteration}.csv',
+                dataname=dataname,
+                X_pred=pred_X,
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['val_y'],
+            )
+
         val_impute_end_time = time.time()
         print(f'Validation imputation time: {val_impute_end_time - val_impute_start_time:.2f} seconds')
 
@@ -412,12 +456,23 @@ if __name__ == '__main__':
         MAEs_out.append(mae_out)
         RMSEs_out.append(rmse_out)
         ACCs_out.append(acc_out)
-        
+
+        # [BARU] Simpan hasil imputasi test (out-of-sample) ke CSV kalau --save_imputation True
+        if args.save_imputation:
+            save_imputed_csv(
+                save_path=f'{result_save_path}/imputed_test_iter{iteration}.csv',
+                dataname=dataname,
+                X_pred=pred_X,
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['test_y'],
+            )
+
         oos_impute_end_time = time.time()
         print(f'Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f} seconds')
-
-        result_save_path = f'results/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
-        os.makedirs(result_save_path, exist_ok=True)
 
         with open(f'{result_save_path}/result.txt', 'a+') as f:
             f.write(f'iteration {iteration}, MAE: in-sample: {mae}, validation: {mae_val}, out-of-sample: {mae_out} \n')
