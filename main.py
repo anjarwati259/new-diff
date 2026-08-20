@@ -30,7 +30,7 @@ parser.add_argument('--num_steps', type=int, default=20, help='Number of diffusi
 # True  -> hasil imputasi tiap iterasi disimpan sebagai file .csv
 # False -> hasil imputasi TIDAK disimpan (default, tidak ada perubahan perilaku lama)
 parser.add_argument('--save_imputation', type=lambda x: str(x).lower() in ('true', '1', 'yes'),
-                     default=True, help='Simpan hasil imputasi train/val/test ke CSV (True/False).')
+                     default=False, help='Simpan hasil imputasi train/val/test ke CSV (True/False).')
 
 args = parser.parse_args()
 
@@ -95,6 +95,11 @@ if __name__ == '__main__':
     MAEs = []
     RMSEs = []
     ACCs = []
+
+    # [BARU] Nampung hasil imputasi (pred_X sudah didenormalisasi) tiap
+    # iterasi di memori dulu. TIDAK langsung ditulis ke CSV per-iterasi --
+    # nanti di akhir cuma iterasi TERBAIK yang ditulis ke folder 'best/'.
+    imputed_per_iter = {}   # { iteration: {'train': pred_X, 'val': pred_X, 'test': pred_X} }
 
     MAEs_val = []     # [BARU]
     RMSEs_val = []    # [BARU]
@@ -319,19 +324,9 @@ if __name__ == '__main__':
         RMSEs.append(rmse)
         ACCs.append(acc)
 
-        # [BARU] Simpan hasil imputasi train ke CSV kalau --save_imputation True
+        # [BARU] Simpan pred_X train ke memori dulu (belum ditulis ke CSV)
         if args.save_imputation:
-            save_imputed_csv(
-                save_path=f'{result_save_path}/imputed_train_iter{iteration}.csv',
-                dataname=dataname,
-                X_pred=pred_X,
-                num_col_idx=meta['num_col_idx'],
-                cat_col_idx=meta['cat_col_idx'],
-                target_col_idx=meta['target_col_idx'],
-                cols=meta['cols'],
-                cat_bin_num=cat_bin_num,
-                y=meta['train_y'],
-            )
+            imputed_per_iter.setdefault(iteration, {})['train'] = pred_X
 
         impute_end_time = time.time()
         print(f'In-sample imputation time: {impute_end_time - impute_start_time:.2f} seconds')
@@ -388,19 +383,9 @@ if __name__ == '__main__':
         RMSEs_val.append(rmse_val)
         ACCs_val.append(acc_val)
 
-        # [BARU] Simpan hasil imputasi validation ke CSV kalau --save_imputation True
+        # [BARU] Simpan pred_X val ke memori dulu (belum ditulis ke CSV)
         if args.save_imputation:
-            save_imputed_csv(
-                save_path=f'{result_save_path}/imputed_val_iter{iteration}.csv',
-                dataname=dataname,
-                X_pred=pred_X,
-                num_col_idx=meta['num_col_idx'],
-                cat_col_idx=meta['cat_col_idx'],
-                target_col_idx=meta['target_col_idx'],
-                cols=meta['cols'],
-                cat_bin_num=cat_bin_num,
-                y=meta['val_y'],
-            )
+            imputed_per_iter.setdefault(iteration, {})['val'] = pred_X
 
         val_impute_end_time = time.time()
         print(f'Validation imputation time: {val_impute_end_time - val_impute_start_time:.2f} seconds')
@@ -457,19 +442,9 @@ if __name__ == '__main__':
         RMSEs_out.append(rmse_out)
         ACCs_out.append(acc_out)
 
-        # [BARU] Simpan hasil imputasi test (out-of-sample) ke CSV kalau --save_imputation True
+        # [BARU] Simpan pred_X test ke memori dulu (belum ditulis ke CSV)
         if args.save_imputation:
-            save_imputed_csv(
-                save_path=f'{result_save_path}/imputed_test_iter{iteration}.csv',
-                dataname=dataname,
-                X_pred=pred_X,
-                num_col_idx=meta['num_col_idx'],
-                cat_col_idx=meta['cat_col_idx'],
-                target_col_idx=meta['target_col_idx'],
-                cols=meta['cols'],
-                cat_bin_num=cat_bin_num,
-                y=meta['test_y'],
-            )
+            imputed_per_iter.setdefault(iteration, {})['test'] = pred_X
 
         oos_impute_end_time = time.time()
         print(f'Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f} seconds')
@@ -487,3 +462,91 @@ if __name__ == '__main__':
         
         # Reset start_time untuk iterasi berikutnya
         start_time = time.time()
+
+    # =========================================================================
+    # [BARU] Setelah SEMUA iterasi (max_iter) selesai: pilih 1 iterasi TERBAIK
+    # berdasarkan metrik VALIDATION (ACCs_val, MAEs_val, RMSEs_val), lalu
+    # simpan cuma CSV imputasi (train/val/test) dari iterasi itu ke folder
+    # 'best/'. Validation dipakai sebagai kriteria karena prinsipnya sama
+    # dengan best_val_loss yang sudah dipakai buat checkpoint selection di
+    # atas -- val tidak ikut backprop, jadi tidak bias/overfit.
+    #
+    # "Terbaik" = ACC paling TINGGI, MAE & RMSE paling RENDAH. Karena bisa
+    # saja iterasi terbaik untuk ACC beda dengan iterasi terbaik untuk
+    # MAE/RMSE, dipakai RANKING GABUNGAN (rank tiap metrik dijumlah, total
+    # rank terkecil = terbaik secara keseluruhan).
+    # =========================================================================
+    if args.save_imputation and len(imputed_per_iter) > 0:
+
+        import numpy as _np
+
+        acc_arr  = _np.array(ACCs_val,  dtype=float)
+        mae_arr  = _np.array(MAEs_val,  dtype=float)
+        rmse_arr = _np.array(RMSEs_val, dtype=float)
+
+        # rank: index 0 = terbaik. NaN (acc) diletakkan paling akhir (terburuk).
+        acc_rank  = _np.argsort(_np.argsort(-_np.nan_to_num(acc_arr, nan=-_np.inf)))
+        mae_rank  = _np.argsort(_np.argsort(mae_arr))
+        rmse_rank = _np.argsort(_np.argsort(rmse_arr))
+
+        total_rank = acc_rank + mae_rank + rmse_rank
+        best_iter = int(_np.argmin(total_rank))
+
+        print(f'[INFO] Iterasi terbaik (val ACC tertinggi, MAE & RMSE terendah): {best_iter}')
+        print(f'[INFO] val -> ACC: {acc_arr[best_iter]}, MAE: {mae_arr[best_iter]}, RMSE: {rmse_arr[best_iter]}')
+
+        best_dir = f'{result_save_path}/best'
+        os.makedirs(best_dir, exist_ok=True)
+
+        best_pred = imputed_per_iter.get(best_iter, {})
+
+        if 'train' in best_pred:
+            save_imputed_csv(
+                save_path=f'{best_dir}/imputed_train.csv',
+                dataname=dataname,
+                X_pred=best_pred['train'],
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['train_y'],
+            )
+
+        if 'val' in best_pred:
+            save_imputed_csv(
+                save_path=f'{best_dir}/imputed_val.csv',
+                dataname=dataname,
+                X_pred=best_pred['val'],
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['val_y'],
+            )
+
+        if 'test' in best_pred:
+            save_imputed_csv(
+                save_path=f'{best_dir}/imputed_test.csv',
+                dataname=dataname,
+                X_pred=best_pred['test'],
+                num_col_idx=meta['num_col_idx'],
+                cat_col_idx=meta['cat_col_idx'],
+                target_col_idx=meta['target_col_idx'],
+                cols=meta['cols'],
+                cat_bin_num=cat_bin_num,
+                y=meta['test_y'],
+            )
+
+        # Ringkasan metrik iterasi terbaik yang dipilih
+        with open(f'{best_dir}/best_iteration_summary.txt', 'w') as f:
+            f.write(f'best_iteration: {best_iter}\n')
+            f.write(f'val   -> ACC: {acc_arr[best_iter]}, MAE: {mae_arr[best_iter]}, RMSE: {rmse_arr[best_iter]}\n')
+            f.write(f'train -> ACC: {ACCs[best_iter]}, MAE: {MAEs[best_iter]}, RMSE: {RMSEs[best_iter]}\n')
+            f.write(f'test  -> ACC: {ACCs_out[best_iter]}, MAE: {MAEs_out[best_iter]}, RMSE: {RMSEs_out[best_iter]}\n')
+            f.write(f'\nSeluruh metrik val per iterasi (dipakai untuk pemilihan):\n')
+            for i in range(len(ACCs_val)):
+                f.write(f'  iter {i}: ACC={ACCs_val[i]}, MAE={MAEs_val[i]}, RMSE={RMSEs_val[i]}\n')
+
+        print(f'[INFO] Hasil imputasi terbaik disimpan di folder: {best_dir}')
