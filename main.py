@@ -24,7 +24,7 @@ parser.add_argument('--max_iter', type=int, default=5, help='Maximum iteration.'
 parser.add_argument('--ratio', type=str, default=30, help='Masking ratio.')
 parser.add_argument('--hid_dim', type=int, default=1024, help='Hidden dimension.')
 parser.add_argument('--mask', type=str, default='MCAR', help='Masking machenisms.')
-parser.add_argument('--num_trials', type=int, default=10, help='Number of sampling times.')
+parser.add_argument('--num_trials', type=int, default=2, help='Number of sampling times.')
 parser.add_argument('--num_steps', type=int, default=50, help='Number of diffusion steps.')
 # [BARU] Opsi untuk menyimpan hasil imputasi (train/val/test) ke CSV.
 # True  -> hasil imputasi tiap iterasi disimpan sebagai file .csv
@@ -182,7 +182,7 @@ if __name__ == '__main__':
             generator=generator  # Gunakan GPU generator
         )
 
-        num_epochs = 10000 + 1
+        num_epochs = 100 + 1
 
         denoise_fn = MLPDiffusion(in_dim, hid_dim).to(device)
 
@@ -319,14 +319,26 @@ if __name__ == '__main__':
         pred_X = pred_X_gpu.cpu().numpy()
         X_true = X_true_gpu.cpu().numpy()
 
+        # [BARU] Versi KHUSUS untuk disimpan ke CSV: bagian numerik JUGA
+        # didenormalisasi penuh ke skala aslinya (mean & std, bukan cuma
+        # kategorik seperti pred_X di atas). pred_X SENGAJA dibiarkan
+        # seperti semula (numerik masih normalized) supaya MAE/RMSE yang
+        # dilaporkan get_eval tidak berubah dari sebelumnya (tetap NRMSE-style).
+        # Hasil pred_X_csv ini nanti HANYA dipakai untuk isi posisi MISSING
+        # di CSV -- posisi observed diambil dari raw_df, bukan dari sini.
+        if args.save_imputation:
+            pred_X_gpu_csv = pred_X_gpu.clone()
+            pred_X_gpu_csv[:, :len_num] = pred_X_gpu_csv[:, :len_num] * std_X_gpu[:len_num] + mean_X_gpu[:len_num]
+            pred_X_csv = pred_X_gpu_csv.cpu().numpy()
+
         mae, rmse, acc = get_eval(dataname, pred_X, X_true, train_cat_idx, train_num.shape[1], cat_bin_num, ori_train_mask)
         MAEs.append(mae)
         RMSEs.append(rmse)
         ACCs.append(acc)
 
-        # [BARU] Simpan pred_X train ke memori dulu (belum ditulis ke CSV)
+        # [BARU] Simpan pred_X (versi fully-denormalized) train ke memori dulu
         if args.save_imputation:
-            imputed_per_iter.setdefault(iteration, {})['train'] = pred_X
+            imputed_per_iter.setdefault(iteration, {})['train'] = pred_X_csv
 
         impute_end_time = time.time()
         print(f'In-sample imputation time: {impute_end_time - impute_start_time:.2f} seconds')
@@ -378,14 +390,20 @@ if __name__ == '__main__':
         pred_X = pred_X_gpu.cpu().numpy()
         X_true = X_true_gpu.cpu().numpy()
 
+        # [BARU] Versi khusus untuk CSV: numerik didenormalisasi penuh juga
+        if args.save_imputation:
+            pred_X_gpu_csv = pred_X_gpu.clone()
+            pred_X_gpu_csv[:, :len_num] = pred_X_gpu_csv[:, :len_num] * std_X_gpu[:len_num] + mean_X_gpu[:len_num]
+            pred_X_csv = pred_X_gpu_csv.cpu().numpy()
+
         mae_val, rmse_val, acc_val = get_eval(dataname, pred_X, X_true, val_cat_idx, val_num.shape[1], cat_bin_num, ori_val_mask, oos=False)
         MAEs_val.append(mae_val)
         RMSEs_val.append(rmse_val)
         ACCs_val.append(acc_val)
 
-        # [BARU] Simpan pred_X val ke memori dulu (belum ditulis ke CSV)
+        # [BARU] Simpan pred_X (versi fully-denormalized) val ke memori dulu
         if args.save_imputation:
-            imputed_per_iter.setdefault(iteration, {})['val'] = pred_X
+            imputed_per_iter.setdefault(iteration, {})['val'] = pred_X_csv
 
         val_impute_end_time = time.time()
         print(f'Validation imputation time: {val_impute_end_time - val_impute_start_time:.2f} seconds')
@@ -437,14 +455,20 @@ if __name__ == '__main__':
         pred_X = pred_X_gpu.cpu().numpy()
         X_true = X_true_gpu.cpu().numpy()
 
+        # [BARU] Versi khusus untuk CSV: numerik didenormalisasi penuh juga
+        if args.save_imputation:
+            pred_X_gpu_csv = pred_X_gpu.clone()
+            pred_X_gpu_csv[:, :len_num] = pred_X_gpu_csv[:, :len_num] * std_X_gpu[:len_num] + mean_X_gpu[:len_num]
+            pred_X_csv = pred_X_gpu_csv.cpu().numpy()
+
         mae_out, rmse_out, acc_out = get_eval(dataname, pred_X, X_true, test_cat_idx, test_num.shape[1], cat_bin_num, ori_test_mask, oos=True)
         MAEs_out.append(mae_out)
         RMSEs_out.append(rmse_out)
         ACCs_out.append(acc_out)
 
-        # [BARU] Simpan pred_X test ke memori dulu (belum ditulis ke CSV)
+        # [BARU] Simpan pred_X (versi fully-denormalized) test ke memori dulu
         if args.save_imputation:
-            imputed_per_iter.setdefault(iteration, {})['test'] = pred_X
+            imputed_per_iter.setdefault(iteration, {})['test'] = pred_X_csv
 
         oos_impute_end_time = time.time()
         print(f'Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f} seconds')
@@ -505,12 +529,13 @@ if __name__ == '__main__':
                 save_path=f'{best_dir}/imputed_train.csv',
                 dataname=dataname,
                 X_pred=best_pred['train'],
+                raw_df=meta['train_df'],
+                mask=ori_train_mask,
                 num_col_idx=meta['num_col_idx'],
                 cat_col_idx=meta['cat_col_idx'],
                 target_col_idx=meta['target_col_idx'],
                 cols=meta['cols'],
                 cat_bin_num=cat_bin_num,
-                y=meta['train_y'],
             )
 
         if 'val' in best_pred:
@@ -518,12 +543,13 @@ if __name__ == '__main__':
                 save_path=f'{best_dir}/imputed_val.csv',
                 dataname=dataname,
                 X_pred=best_pred['val'],
+                raw_df=meta['val_df'],
+                mask=ori_val_mask,
                 num_col_idx=meta['num_col_idx'],
                 cat_col_idx=meta['cat_col_idx'],
                 target_col_idx=meta['target_col_idx'],
                 cols=meta['cols'],
                 cat_bin_num=cat_bin_num,
-                y=meta['val_y'],
             )
 
         if 'test' in best_pred:
@@ -531,12 +557,13 @@ if __name__ == '__main__':
                 save_path=f'{best_dir}/imputed_test.csv',
                 dataname=dataname,
                 X_pred=best_pred['test'],
+                raw_df=meta['test_df'],
+                mask=ori_test_mask,
                 num_col_idx=meta['num_col_idx'],
                 cat_col_idx=meta['cat_col_idx'],
                 target_col_idx=meta['target_col_idx'],
                 cols=meta['cols'],
                 cat_bin_num=cat_bin_num,
-                y=meta['test_y'],
             )
 
         # Ringkasan metrik iterasi terbaik yang dipilih

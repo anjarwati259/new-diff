@@ -208,9 +208,15 @@ def load_dataset(dataname, idx = 0, mask_type = 'MCAR', ratio = '30'):
 
 def load_meta(dataname):
     """
-    [BARU] Load metadata (nama kolom asli + info.json + target asli) yang
-    dibutuhkan untuk menulis hasil imputasi ke CSV dengan nama & urutan
-    kolom yang sama seperti dataset aslinya.
+    [BARU] Load metadata (nama kolom asli + info.json + dataframe mentah)
+    yang dibutuhkan untuk menulis hasil imputasi ke CSV.
+
+    [MODIFIKASI] Sekarang juga mengembalikan train_df/val_df/test_df MENTAH
+    (belum diproses apapun) -- dipakai supaya nilai OBSERVED di CSV hasil
+    imputasi diambil PERSIS dari file asli, bukan hasil round-trip
+    normalize -> denormalize dari model. Sesuai konsep DiffPuter: hanya
+    posisi MISSING yang diisi hasil model, posisi observed tidak pernah
+    disentuh/diubah.
 
     Sengaja dibuat sebagai fungsi terpisah (bukan menambah return value di
     load_dataset) supaya signature load_dataset yang sudah dipakai di
@@ -229,58 +235,67 @@ def load_meta(dataname):
     cols = train_df.columns
     target_col_idx = info['target_col_idx']
 
-    train_y = train_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
-    val_y = val_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
-    test_y = test_df[cols[target_col_idx]].values if len(target_col_idx) > 0 else None
-
     return {
         'cols': cols,
         'num_col_idx': info['num_col_idx'],
         'cat_col_idx': info['cat_col_idx'],
         'target_col_idx': target_col_idx,
-        'train_y': train_y,
-        'val_y': val_y,
-        'test_y': test_y,
+        # [BARU] dataframe mentah, dipakai untuk nilai observed di CSV hasil imputasi
+        'train_df': train_df,
+        'val_df': val_df,
+        'test_df': test_df,
     }
 
 
-def save_imputed_csv(save_path, dataname, X_pred, num_col_idx, cat_col_idx,
-                      target_col_idx, cols, cat_bin_num, y=None):
+def save_imputed_csv(save_path, dataname, X_pred, raw_df, mask, num_col_idx,
+                      cat_col_idx, target_col_idx, cols, cat_bin_num):
     """
-    [BARU] Simpan hasil imputasi ke file CSV dengan nama & urutan kolom
-    sama seperti dataset asli.
+    [MODIFIKASI] Simpan hasil imputasi ke CSV, dengan aturan TEGAS sesuai
+    konsep DiffPuter:
+        - Posisi OBSERVED (mask == 0/False) -> ambil nilai ASLI dari raw_df
+          apa adanya (tidak lewat model / denormalisasi sama sekali).
+        - Posisi MISSING (mask == 1/True)   -> ambil hasil decode/denormalisasi
+          dari X_pred (output model).
+    Kolom target TIDAK PERNAH diimputasi -> selalu diambil dari raw_df.
 
     Parameter:
-        save_path      : path file csv tujuan (folder induk akan dibuat
-                          otomatis kalau belum ada)
-        dataname        : nama dataset (dipakai untuk load map kategori)
-        X_pred          : hasil imputasi yang SUDAH didenormalisasi,
-                           shape (N, num_num + sum(cat_bin_num))
-                           -> kolom numerik dulu, baru kolom kategorik
-                           (binary-encoded), persis format train_X/val_X/test_X
+        save_path      : path file csv tujuan
+        dataname        : nama dataset (untuk load map kategori)
+        X_pred          : hasil rekonstruksi model, SUDAH didenormalisasi
+                           penuh (numerik & kategorik), shape
+                           (N, num_num + sum(cat_bin_num)) -> kolom numerik
+                           dulu, baru kolom kategorik (binary-encoded)
+        raw_df          : dataframe ASLI split ini (train_df/val_df/test_df
+                           dari load_meta), dipakai untuk nilai observed
+        mask            : mask ORIGINAL (bukan bit-level!), shape
+                           (N, len(cols)), True/1 = missing, False/0 = observed
+                           -> ini ori_train_mask/ori_val_mask/ori_test_mask
+                           dari load_dataset
         num_col_idx     : list index kolom numerik (dari info.json)
         cat_col_idx     : list index kolom kategorik (dari info.json)
         target_col_idx  : list index kolom target (dari info.json)
-        cols            : daftar nama kolom dataset asli (train_df.columns)
-        cat_bin_num     : jumlah bit per kolom kategorik (hasil load_dataset)
-        y               : nilai target asli (N, len(target_col_idx)) kalau
-                           mau ikut disimpan; None kalau tidak
-
-    Kolom kategorik di-decode balik dari binary bits -> integer index ->
-    label kategori asli, memakai file <kolom>_map_idx.json yang sudah
-    dibuat oleh load_dataset (mapping category -> index, di-reverse di sini).
+        cols            : daftar nama kolom dataset asli
+        cat_bin_num     : jumlah bit per kolom kategorik
     """
     data_dir = f'datasets/{dataname}'
     num_num = len(num_col_idx)
+    mask_bool = np.asarray(mask).astype(bool)
 
     result = {}
 
-    # ----- kolom numerik: langsung dipakai (sudah didenormalisasi) -----
+    # ----- kolom numerik -----
+    # observed -> nilai asli dari raw_df (tidak diubah)
+    # missing  -> hasil model (X_pred), sudah didenormalisasi ke skala asli
     for i, col_idx in enumerate(num_col_idx):
         col_name = cols[col_idx]
-        result[col_name] = X_pred[:, i]
+        raw_vals = raw_df[col_name].values.astype(np.float32)
+        pred_vals = X_pred[:, i].astype(np.float32)
+        col_missing = mask_bool[:, col_idx]
+        result[col_name] = np.where(col_missing, pred_vals, raw_vals)
 
-    # ----- kolom kategorik: decode bits -> idx -> label asli -----
+    # ----- kolom kategorik -----
+    # observed -> LABEL ASLI dari raw_df (tidak pernah lewat decode bit sama sekali)
+    # missing  -> decode bits model -> idx -> label kategori
     if len(cat_col_idx) > 0 and cat_bin_num is not None:
         cat_bin_num = np.array(cat_bin_num).astype(int)
         ends = np.cumsum(cat_bin_num)
@@ -300,29 +315,30 @@ def save_imputed_csv(save_path, dataname, X_pred, num_col_idx, cat_col_idx,
 
             nclass = len(category_to_idx)
             pred_idx_j = np.clip(pred_idx_j, 0, nclass - 1)
+            decoded = np.array(
+                [idx_to_category.get(int(k), None) for k in pred_idx_j],
+                dtype=object,
+            )
 
-            result[col_name] = [idx_to_category.get(int(i), None) for i in pred_idx_j]
+            raw_vals = raw_df[col_name].astype(str).values
+            col_missing = mask_bool[:, col_idx]
+            result[col_name] = np.where(col_missing, decoded, raw_vals)
 
-    # ----- kolom target (opsional, tidak diimputasi, tinggal disalin) -----
-    if y is not None and len(target_col_idx) > 0:
-        y = np.asarray(y)
-        if y.ndim == 1:
-            y = y.reshape(-1, 1)
-        for i, col_idx in enumerate(target_col_idx):
-            result[cols[col_idx]] = y[:, i]
+    # ----- kolom target: TIDAK PERNAH diimputasi, selalu dari raw_df -----
+    for col_idx in target_col_idx:
+        col_name = cols[col_idx]
+        result[col_name] = raw_df[col_name].values
 
     df = pd.DataFrame(result)
 
     # urutkan kolom sesuai urutan aslinya di dataset
-    all_idx = list(num_col_idx) + list(cat_col_idx)
-    if y is not None:
-        all_idx += list(target_col_idx)
+    all_idx = list(num_col_idx) + list(cat_col_idx) + list(target_col_idx)
     ordered_cols = [cols[i] for i in sorted(all_idx) if cols[i] in df.columns]
     df = df[ordered_cols]
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     df.to_csv(save_path, index=False)
-    print(f'[INFO] Hasil imputasi disimpan ke {save_path}')
+    print(f'[INFO] Hasil imputasi disimpan ke {save_path} (observed=asli, missing=hasil model)')
 
 
 def mean_std(data, mask):
