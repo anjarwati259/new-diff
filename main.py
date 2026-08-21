@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset import load_dataset, get_eval, mean_std
+from dataset_base import load_dataset, get_eval, mean_std, save_imputed_csv, select_best_iteration
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -20,15 +20,18 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname', type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu', type=int, default=0, help='GPU index.')
 parser.add_argument('--split_idx', type=int, default=0, help='Split idx.')
-parser.add_argument('--max_iter', type=int, default=5, help='Maximum iteration.')
+parser.add_argument('--max_iter', type=int, default=2, help='Maximum iteration.')
 parser.add_argument('--ratio', type=str, default=30, help='Masking ratio.')
 parser.add_argument('--hid_dim', type=int, default=1024, help='Hidden dimension.')
 parser.add_argument('--mask', type=str, default='MCAR', help='Masking machenisms.')
 parser.add_argument('--num_trials', type=int, default=2, help='Number of sampling times.')
 parser.add_argument('--num_steps', type=int, default=50, help='Number of diffusion steps.')
 parser.add_argument('--reset', action='store_true', help='Hapus checkpoint lama sebelum training.')
+parser.add_argument('--save_csv', type=str, default='True', choices=['True', 'False'],
+                     help='True: simpan hasil imputasi (iterasi terbaik out-of-sample) ke CSV. False: tidak disimpan.')
 
 args = parser.parse_args()
+args.save_csv = (args.save_csv == 'True')
 
 # Force GPU usage - akan error jika GPU tidak tersedia
 if not torch.cuda.is_available():
@@ -63,26 +66,18 @@ if __name__ == '__main__':
             shutil.rmtree(reset_path)
             print(f'[reset] Checkpoint lama dihapus: {reset_path}')
 
-    (train_X, val_X, test_X,
-     ori_train_mask, ori_val_mask, ori_test_mask,
-     train_num, val_num, test_num,
-     train_cat_idx, val_cat_idx, test_cat_idx,
-     train_mask, val_mask, test_mask,
-     cat_bin_num) = load_dataset(dataname, split_idx, mask_type, ratio)
-
-    # mean/std dihitung dari train saja (val & test hanya dinormalisasi memakai statistik ini)
-    mean_X, std_X = mean_std(train_X, train_mask)
+    train_X, test_X, ori_train_mask, ori_test_mask, train_num, test_num, train_cat_idx, test_cat_idx, train_mask, test_mask, cat_bin_num = load_dataset(dataname, split_idx, mask_type, ratio)
+    
+    mean_X, std_X = mean_std(train_X, train_mask)    
     in_dim = train_X.shape[1]
 
     # Langsung convert ke GPU tensor
     X = torch.tensor((train_X - mean_X) / std_X / 2, device=device, dtype=torch.float32)
-    X_val = torch.tensor((val_X - mean_X) / std_X / 2, device=device, dtype=torch.float32)
     X_test = torch.tensor((test_X - mean_X) / std_X / 2, device=device, dtype=torch.float32)
-
+    
     mask_train = torch.tensor(train_mask, device=device, dtype=torch.float32)
-    mask_val = torch.tensor(val_mask, device=device, dtype=torch.float32)
     mask_test = torch.tensor(test_mask, device=device, dtype=torch.float32)
-
+    
     # Convert mean dan std ke GPU tensor untuk operasi selanjutnya
     mean_X_gpu = torch.tensor(mean_X, device=device, dtype=torch.float32)
     std_X_gpu = torch.tensor(std_X, device=device, dtype=torch.float32)
@@ -91,25 +86,15 @@ if __name__ == '__main__':
     RMSEs = []
     ACCs = []
 
-    MAEs_val = []
-    RMSEs_val = []
-    ACCs_val = []
-
     MAEs_out = []
     RMSEs_out = []
     ACCs_out = []
-
-    # Menyimpan iterasi terbaik berdasarkan validasi (validasi TIDAK ikut mempengaruhi
-    # training maupun testing, hanya dipakai sebagai acuan pemilihan hasil terbaik)
-    best_val_mae = float('inf')
-    best_iter = -1
-    best_metrics = None  # dict: mae/rmse/acc untuk in-sample, validation, out-of-sample
 
     start_time = time.time()
     for iteration in range(args.max_iter):
 
         ## M-Step: Density Estimation
-
+     
         ckpt_dir = f'ckpt/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
         os.makedirs(f'{ckpt_dir}/{iteration}', exist_ok=True)
 
@@ -128,21 +113,21 @@ if __name__ == '__main__':
         print(f'[INFO] Loaded X_miss shape: {train_data.shape}, range: [{train_data.min():.4f}, {train_data.max():.4f}]')
 
         batch_size = 4096
-
+        
         # Buat generator untuk GPU
         generator = torch.Generator(device=device)
-
+        
         # Custom Dataset untuk GPU tensor
         class GPUTensorDataset(torch.utils.data.Dataset):
             def __init__(self, data):
                 self.data = data
-
+            
             def __len__(self):
                 return len(self.data)
-
+            
             def __getitem__(self, idx):
                 return self.data[idx]
-
+        
         train_loader = DataLoader(
             GPUTensorDataset(train_data),
             batch_size=batch_size,
@@ -175,7 +160,7 @@ if __name__ == '__main__':
 
             batch_loss = 0.0
             len_input = 0
-
+ 
             for batch in train_loader:
                 inputs = batch.float()  # Sudah di GPU, tidak perlu .to(device)
                 loss = model(inputs)
@@ -200,29 +185,29 @@ if __name__ == '__main__':
                 if patience == 500:
                     print('Early stopping')
                     break
-
+            
             pbar.set_postfix(loss=curr_loss)
 
             if epoch % 1000 == 0:
                 torch.save(model.state_dict(), f'{ckpt_dir}/{iteration}/model_{epoch}.pt')
 
         end_time = time.time()
-
+        
         print(f'Iteration {iteration} training time: {end_time - start_time:.2f} seconds')
 
         ## E-Step: Missing Value Imputation
 
         # In-sample imputation
-
+        
         impute_start_time = time.time()
 
         rec_Xs = []
 
         for trial in tqdm(range(num_trials), desc='In-sample imputation'):
-
+        
             X_miss = (1. - mask_train) * X
             impute_X = X_miss  # Sudah di GPU
-
+  
             in_dim = X.shape[1]
 
             denoise_fn = MLPDiffusion(in_dim, hid_dim).to(device)
@@ -236,12 +221,14 @@ if __name__ == '__main__':
 
             num_samples, dim = X.shape[0], X.shape[1]
             rec_X = impute_mask(net, impute_X, mask_train, num_samples, dim, num_steps, device)
-
+            
             mask_int = mask_train.float()  # Sudah di GPU
             rec_X = rec_X * mask_int + impute_X * (1 - mask_int)
             rec_Xs.append(rec_X)
+            
+            
 
-        rec_X = torch.stack(rec_Xs, dim=0).mean(0)
+        rec_X = torch.stack(rec_Xs, dim=0).mean(0) 
 
         # Simpan hasil (hanya saat save ke disk yang perlu CPU)
         rec_X_save = (rec_X * 2).cpu().numpy()
@@ -265,74 +252,20 @@ if __name__ == '__main__':
         MAEs.append(mae)
         RMSEs.append(rmse)
         ACCs.append(acc)
-
+        
         impute_end_time = time.time()
         print(f'In-sample imputation time: {impute_end_time - impute_start_time:.2f} seconds')
 
         print('in-sample', mae, rmse, acc)
 
-        # Validation imputation (out-of-sample-style, TIDAK mempengaruhi training/testing).
-        # Hanya dipakai sebagai acuan untuk memilih iterasi/hasil terbaik.
-
-        val_impute_start_time = time.time()
-
-        rec_Xs = []
-
-        for trial in tqdm(range(num_trials), desc='Validation imputation'):
-
-            # Sama seperti out-of-sample: tidak menggunakan hasil iterasi sebelumnya
-            X_miss = (1. - mask_val) * X_val
-            impute_X = X_miss  # Sudah di GPU
-
-            in_dim = X_val.shape[1]
-
-            denoise_fn = MLPDiffusion(in_dim, hid_dim).to(device)
-
-            model = Model(denoise_fn=denoise_fn, hid_dim=in_dim).to(device)
-            model.load_state_dict(torch.load(f'{ckpt_dir}/{iteration}/model.pt'))
-
-            # ==========================================================
-            net = model.denoise_fn_D
-
-            num_samples, dim = X_val.shape[0], X_val.shape[1]
-            rec_X = impute_mask(net, impute_X, mask_val, num_samples, dim, num_steps, device)
-
-            mask_int = mask_val.float()  # Sudah di GPU
-            rec_X = rec_X * mask_int + impute_X * (1 - mask_int)
-            rec_Xs.append(rec_X)
-
-        rec_X = torch.stack(rec_Xs, dim=0).mean(0)
-
-        # Lakukan komputasi di GPU
-        pred_X_gpu = rec_X * 2
-        X_true_gpu = X_val * 2
-
-        # Denormalisasi di GPU
-        len_num = train_num.shape[1]
-        pred_X_gpu[:, len_num:] = pred_X_gpu[:, len_num:] * std_X_gpu[len_num:] + mean_X_gpu[len_num:]
-
-        # Convert ke CPU hanya untuk evaluasi
-        pred_X = pred_X_gpu.cpu().numpy()
-        X_true = X_true_gpu.cpu().numpy()
-
-        mae_val, rmse_val, acc_val = get_eval(dataname, pred_X, X_true, val_cat_idx, val_num.shape[1], cat_bin_num, ori_val_mask, oos=True)
-        MAEs_val.append(mae_val)
-        RMSEs_val.append(rmse_val)
-        ACCs_val.append(acc_val)
-
-        val_impute_end_time = time.time()
-        print(f'Validation imputation time: {val_impute_end_time - val_impute_start_time:.2f} seconds')
-
-        print('validation', mae_val, rmse_val, acc_val)
-
         # out-of-sample imputation
-
+        
         oos_impute_start_time = time.time()
 
         rec_Xs = []
 
         for trial in tqdm(range(num_trials), desc='Out-of-sample imputation'):
-
+            
             # For out-of-sample imputation, no results from previous iterations are used
 
             X_miss = (1. - mask_test) * X_test
@@ -350,12 +283,13 @@ if __name__ == '__main__':
 
             num_samples, dim = X_test.shape[0], X_test.shape[1]
             rec_X = impute_mask(net, impute_X, mask_test, num_samples, dim, num_steps, device)
-
+            
             mask_int = mask_test.float()  # Sudah di GPU
             rec_X = rec_X * mask_int + impute_X * (1 - mask_int)
             rec_Xs.append(rec_X)
-
-        rec_X = torch.stack(rec_Xs, dim=0).mean(0)
+            
+    
+        rec_X = torch.stack(rec_Xs, dim=0).mean(0) 
 
         # Lakukan komputasi di GPU
         pred_X_gpu = rec_X * 2
@@ -374,47 +308,80 @@ if __name__ == '__main__':
         RMSEs_out.append(rmse_out)
         ACCs_out.append(acc_out)
 
+        # Simpan pred_X out-of-sample (sudah didenormalisasi) tiap iterasi,
+        # dipakai nanti untuk membuat CSV hasil imputasi dari iterasi terbaik.
+        np.save(f'{ckpt_dir}/oos_pred_{iteration}.npy', pred_X)
+        
         oos_impute_end_time = time.time()
         print(f'Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f} seconds')
-
-        # ==== Pilih hasil terbaik berdasarkan MAE validasi ====
-        # (validasi hanya dipakai sebagai acuan, tidak mempengaruhi train/test)
-        if mae_val < best_val_mae:
-            best_val_mae = mae_val
-            best_iter = iteration
-            best_metrics = {
-                'mae': mae, 'rmse': rmse, 'acc': acc,
-                'mae_val': mae_val, 'rmse_val': rmse_val, 'acc_val': acc_val,
-                'mae_out': mae_out, 'rmse_out': rmse_out, 'acc_out': acc_out,
-            }
 
         result_save_path = f'results/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
         os.makedirs(result_save_path, exist_ok=True)
 
         with open(f'{result_save_path}/result_base.txt', 'a+') as f:
-            f.write(f'iteration {iteration}, MAE: in-sample: {mae}, validation: {mae_val}, out-of-sample: {mae_out} \n')
-            f.write(f'iteration {iteration}: RMSE: in-sample: {rmse}, validation: {rmse_val}, out-of-sample: {rmse_out} \n')
-            f.write(f'iteration {iteration}: ACC: in-sample: {acc}, validation: {acc_val}, out-of-sample: {acc_out} \n')
-            f.write(f'iteration {iteration}: Training time: {end_time - start_time:.2f}s, In-sample imputation time: {impute_end_time - impute_start_time:.2f}s, Validation imputation time: {val_impute_end_time - val_impute_start_time:.2f}s, Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f}s \n\n')
+            f.write(f'iteration {iteration}, MAE: in-sample: {mae}, out-of-sample: {mae_out} \n')
+            f.write(f'iteration {iteration}: RMSE: in-sample: {rmse}, out-of-sample: {rmse_out} \n')
+            f.write(f'iteration {iteration}: ACC: in-sample: {acc}, out-of-sample: {acc_out} \n')
+            f.write(f'iteration {iteration}: Training time: {end_time - start_time:.2f}s, In-sample imputation time: {impute_end_time - impute_start_time:.2f}s, Out-of-sample imputation time: {oos_impute_end_time - oos_impute_start_time:.2f}s \n\n')
 
         print('out-of-sample', mae_out, rmse_out, acc_out)
 
         print(f'saving results to {result_save_path}')
-
+        
         # Reset start_time untuk iterasi berikutnya
         start_time = time.time()
 
-    # Setelah semua iterasi selesai, laporkan hasil terbaik menurut validasi
-    if best_iter >= 0:
-        m = best_metrics
-        print(f'\n[BEST by validation] iteration {best_iter}')
-        print(f'  in-sample     -> MAE: {m["mae"]}, RMSE: {m["rmse"]}, ACC: {m["acc"]}')
-        print(f'  validation    -> MAE: {m["mae_val"]}, RMSE: {m["rmse_val"]}, ACC: {m["acc_val"]}')
-        print(f'  out-of-sample -> MAE: {m["mae_out"]}, RMSE: {m["rmse_out"]}, ACC: {m["acc_out"]}')
+    ## ==== Ringkasan akhir ====
 
-        result_save_path = f'results/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
+    # 1) Metrik RESMI: mengikuti metode asli DiffPuter, yaitu hasil dari ITERASI TERAKHIR
+    #    (max_iter - 1) apa adanya, tanpa ada seleksi/pemilihan apapun berdasarkan test set.
+    #    Ini yang sebaiknya dipakai kalau mau membandingkan performa dengan baseline/paper asli.
+    last_iter = args.max_iter - 1
+
+    print(f'\n[RESMI] Iterasi terakhir : {last_iter}')
+    print(f'[RESMI] MAE  : {MAEs_out[last_iter]}')
+    print(f'[RESMI] RMSE : {RMSEs_out[last_iter]}')
+    print(f'[RESMI] ACC  : {ACCs_out[last_iter]}')
+
+    # 2) Iterasi TERPILIH: dipilih SETELAH semua iterasi selesai dilatih (max_iter penuh
+    #    tetap berjalan seperti biasa, tidak ada early-stopping). Pemilihan ini murni untuk
+    #    menentukan file CSV mana yang disimpan sebagai hasil imputasi praktis - SAMA SEKALI
+    #    tidak memengaruhi proses training/M-step di iterasi manapun.
+    best_iter = select_best_iteration(MAEs_out, RMSEs_out, ACCs_out)
+
+    print(f'\n[TERPILIH - untuk CSV] Iterasi : {best_iter}')
+    print(f'[TERPILIH] MAE  : {MAEs_out[best_iter]}')
+    print(f'[TERPILIH] RMSE : {RMSEs_out[best_iter]}')
+    print(f'[TERPILIH] ACC  : {ACCs_out[best_iter]}')
+
+    with open(f'{result_save_path}/result_base.txt', 'a+') as f:
+        f.write(f'\n[RESMI - iterasi terakhir {last_iter}] MAE: {MAEs_out[last_iter]}, RMSE: {RMSEs_out[last_iter]}, ACC: {ACCs_out[last_iter]} \n')
+        f.write(f'[TERPILIH - iterasi {best_iter}, hanya untuk penyimpanan CSV] MAE: {MAEs_out[best_iter]}, RMSE: {RMSEs_out[best_iter]}, ACC: {ACCs_out[best_iter]} \n')
+
+    ## Simpan hasil imputasi (iterasi TERPILIH) ke CSV, ke dalam folder tersendiri.
+    ## Bisa dimatikan lewat --save_csv False.
+
+    if args.save_csv:
+        best_pred_X = np.load(f'{ckpt_dir}/oos_pred_{best_iter}.npy')
+
+        imputed_csv_dir = f'{result_save_path}/imputed_csv'
+        os.makedirs(imputed_csv_dir, exist_ok=True)
+        imputed_csv_path = f'{imputed_csv_dir}/imputed_test_best_iter{best_iter}.csv'
+
+        save_imputed_csv(
+            dataname=dataname,
+            pred_X=best_pred_X,
+            num_num=test_num.shape[1],
+            cat_bin_num=cat_bin_num,
+            mask=ori_test_mask,
+            split_df_path=f'datasets/{dataname}/test.csv',
+            save_path=imputed_csv_path,
+            oos=True
+        )
+
         with open(f'{result_save_path}/result_base.txt', 'a+') as f:
-            f.write(f'BEST iteration (chosen by lowest validation MAE): {best_iter} \n')
-            f.write(f'  in-sample     -> MAE: {m["mae"]}, RMSE: {m["rmse"]}, ACC: {m["acc"]} \n')
-            f.write(f'  validation    -> MAE: {m["mae_val"]}, RMSE: {m["rmse_val"]}, ACC: {m["acc_val"]} \n')
-            f.write(f'  out-of-sample -> MAE: {m["mae_out"]}, RMSE: {m["rmse_out"]}, ACC: {m["acc_out"]} \n\n')
+            f.write(f'[CSV] Hasil imputasi (iterasi {best_iter}) disimpan di: {imputed_csv_path} \n\n')
+    else:
+        print('\n[INFO] --save_csv False -> hasil imputasi TIDAK disimpan ke CSV.')
+        with open(f'{result_save_path}/result_base.txt', 'a+') as f:
+            f.write('[CSV] --save_csv False -> hasil imputasi TIDAK disimpan ke CSV.\n\n')
