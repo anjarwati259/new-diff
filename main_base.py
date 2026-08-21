@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset import load_dataset, get_eval, mean_std
+from dataset_base import load_dataset, get_eval, mean_std
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -20,12 +20,13 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname', type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu', type=int, default=0, help='GPU index.')
 parser.add_argument('--split_idx', type=int, default=0, help='Split idx.')
-parser.add_argument('--max_iter', type=int, default=5, help='Maximum iteration.')
+parser.add_argument('--max_iter', type=int, default=2, help='Maximum iteration.')
 parser.add_argument('--ratio', type=str, default=30, help='Masking ratio.')
 parser.add_argument('--hid_dim', type=int, default=1024, help='Hidden dimension.')
 parser.add_argument('--mask', type=str, default='MCAR', help='Masking machenisms.')
-parser.add_argument('--num_trials', type=int, default=5, help='Number of sampling times.')
-parser.add_argument('--num_steps', type=int, default=20, help='Number of diffusion steps.')
+parser.add_argument('--num_trials', type=int, default=2, help='Number of sampling times.')
+parser.add_argument('--num_steps', type=int, default=50, help='Number of diffusion steps.')
+parser.add_argument('--reset', action='store_true', help='Hapus checkpoint lama sebelum training.')
 
 args = parser.parse_args()
 
@@ -53,6 +54,14 @@ if __name__ == '__main__':
 
     if mask_type == 'MNAR':
         mask_type = 'MNAR_logistic_T2'
+
+    # Hapus checkpoint lama jika --reset dipakai
+    if args.reset:
+        import shutil
+        reset_path = f'ckpt/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
+        if os.path.exists(reset_path):
+            shutil.rmtree(reset_path)
+            print(f'[reset] Checkpoint lama dihapus: {reset_path}')
 
     train_X, test_X, ori_train_mask, ori_test_mask, train_num, test_num, train_cat_idx, test_cat_idx, train_mask, test_mask, cat_bin_num = load_dataset(dataname, split_idx, mask_type, ratio)
     
@@ -99,7 +108,7 @@ if __name__ == '__main__':
             train_data = X_miss
 
         print(f'[INFO] Loaded X_miss shape: {train_data.shape}, range: [{train_data.min():.4f}, {train_data.max():.4f}]')
-        
+
         batch_size = 4096
         
         # Buat generator untuk GPU
@@ -125,7 +134,7 @@ if __name__ == '__main__':
             generator=generator  # Gunakan GPU generator
         )
 
-        num_epochs = 10 + 1
+        num_epochs = 100 + 1
 
         denoise_fn = MLPDiffusion(in_dim, hid_dim).to(device)
 
@@ -302,7 +311,7 @@ if __name__ == '__main__':
         result_save_path = f'results/{dataname}/rate{ratio}/{mask_type}/{split_idx}/{num_trials}_{num_steps}'
         os.makedirs(result_save_path, exist_ok=True)
 
-        with open(f'{result_save_path}/result.txt', 'a+') as f:
+        with open(f'{result_save_path}/result_base.txt', 'a+') as f:
             f.write(f'iteration {iteration}, MAE: in-sample: {mae}, out-of-sample: {mae_out} \n')
             f.write(f'iteration {iteration}: RMSE: in-sample: {rmse}, out-of-sample: {rmse_out} \n')
             f.write(f'iteration {iteration}: ACC: in-sample: {acc}, out-of-sample: {acc_out} \n')

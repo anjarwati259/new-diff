@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset import load_dataset, get_eval, mean_std, save_imputed_csv, select_best_iteration
+from dataset import load_dataset, get_eval, mean_std, save_imputed_csv, select_best_iteration, denormalize_numeric_for_csv
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -20,11 +20,11 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname', type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu', type=int, default=0, help='GPU index.')
 parser.add_argument('--split_idx', type=int, default=0, help='Split idx.')
-parser.add_argument('--max_iter', type=int, default=2, help='Maximum iteration.')
+parser.add_argument('--max_iter', type=int, default=6, help='Maximum iteration.')
 parser.add_argument('--ratio', type=str, default=30, help='Masking ratio.')
 parser.add_argument('--hid_dim', type=int, default=1024, help='Hidden dimension.')
 parser.add_argument('--mask', type=str, default='MCAR', help='Masking machenisms.')
-parser.add_argument('--num_trials', type=int, default=2, help='Number of sampling times.')
+parser.add_argument('--num_trials', type=int, default=10, help='Number of sampling times.')
 parser.add_argument('--num_steps', type=int, default=50, help='Number of diffusion steps.')
 parser.add_argument('--reset', action='store_true', help='Hapus checkpoint lama sebelum training.')
 parser.add_argument('--save_csv', type=str, default='True', choices=['True', 'False'],
@@ -137,7 +137,7 @@ if __name__ == '__main__':
             generator=generator  # Gunakan GPU generator
         )
 
-        num_epochs = 100 + 1
+        num_epochs = 10000 + 1
 
         denoise_fn = MLPDiffusion(in_dim, hid_dim).to(device)
 
@@ -364,13 +364,21 @@ if __name__ == '__main__':
     if args.save_csv:
         best_pred_X = np.load(f'{ckpt_dir}/oos_pred_{best_iter}.npy')
 
+        # (Tambahan, terpisah) - bagian numerik pada best_pred_X masih dalam skala
+        # ternormalisasi (x-mean)/std (lihat penjelasan di denormalize_numeric_for_csv).
+        # Ini HANYA dipakai untuk keperluan penulisan CSV, tidak menyentuh/mengubah
+        # mae_out, rmse_out, acc_out, ataupun isi file 'oos_pred_{iteration}.npy' itu sendiri.
+        best_pred_X_for_csv = denormalize_numeric_for_csv(
+            best_pred_X, mean_X, std_X, test_num.shape[1]
+        )
+
         imputed_csv_dir = f'{result_save_path}/imputed_csv'
         os.makedirs(imputed_csv_dir, exist_ok=True)
         imputed_csv_path = f'{imputed_csv_dir}/imputed_test_best_iter{best_iter}.csv'
 
         save_imputed_csv(
             dataname=dataname,
-            pred_X=best_pred_X,
+            pred_X=best_pred_X_for_csv,
             num_num=test_num.shape[1],
             cat_bin_num=cat_bin_num,
             mask=ori_test_mask,

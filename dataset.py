@@ -478,3 +478,55 @@ def select_best_iteration(maes, rmses, accs):
     best_idx = int(total_rank.idxmin())
 
     return best_idx
+
+
+def denormalize_numeric_for_csv(pred_X, mean_X, std_X, num_num):
+    """
+    (FUNGSI TAMBAHAN - terpisah, tidak mengubah alur/fungsi lain yang sudah ada)
+
+    Mengembalikan bagian NUMERIK dari `pred_X` ke skala asli dataset (undo normalisasi
+    z-score), KHUSUS untuk keperluan penyimpanan hasil imputasi ke CSV.
+
+    Latar belakang
+    --------------
+    Pada alur utama, seluruh kolom `train_X`/`test_X` (numerik + bit kategorik digabung)
+    dinormalisasi bersama sebagai:
+            X = (data - mean_X) / std_X / 2
+    Saat rekonstruksi (di main_base.py), yang di-denormalisasi kembali (dikali std_X,
+    ditambah mean_X) HANYA bagian kategorik-nya saja (dipakai untuk decoding bit -> label
+    kategori). Bagian numerik pada array hasil rekonstruksi (`pred_X`, mis. isi file
+    'oos_pred_{iteration}.npy') masih dalam skala (x - mean) / std, BUKAN skala asli.
+
+    Ini TIDAK memengaruhi perhitungan MAE/RMSE/Accuracy yang sudah berjalan (alur tersebut
+    sengaja tidak diubah/disentuh). Fungsi ini dipanggil terpisah, hanya sesaat sebelum
+    data ditulis ke CSV lewat `save_imputed_csv`, agar nilai numerik yang tersimpan di CSV
+    benar-benar dalam satuan/skala asli dataset - konsisten dengan nilai observed yang
+    diambil langsung dari train.csv/test.csv asli.
+
+    Parameters
+    ----------
+    pred_X : np.ndarray, shape (N, num_num + sum(cat_bin_num))
+        Array hasil rekonstruksi seperti yang disimpan pada 'oos_pred_{iteration}.npy'
+        (bagian numerik MASIH ternormalisasi, bagian kategorik SUDAH didenormalisasi
+        seperti pada alur yang sudah ada).
+    mean_X, std_X : np.ndarray, shape (num_num + sum(cat_bin_num),)
+        Mean & std yang sama persis dipakai saat normalisasi awal di main_base.py
+        (hasil dari `mean_std(train_X, train_mask)`).
+    num_num : int
+        Jumlah kolom numerik (banyaknya kolom pada num_col_idx).
+
+    Return
+    ------
+    pred_X_fixed : np.ndarray
+        SALINAN dari `pred_X` (array input tidak diubah/in-place) dengan bagian numerik
+        sudah dalam skala asli. Bagian kategorik dibiarkan apa adanya (sudah benar).
+    """
+
+    pred_X_fixed = np.array(pred_X, copy=True)
+
+    mean_X = np.asarray(mean_X)
+    std_X = np.asarray(std_X)
+
+    pred_X_fixed[:, :num_num] = pred_X_fixed[:, :num_num] * std_X[:num_num] + mean_X[:num_num]
+
+    return pred_X_fixed
