@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset_base import load_dataset, get_eval, mean_std, save_imputed_csv, select_best_iteration
+from dataset import load_dataset, get_eval, mean_std, save_imputed_csv, select_best_iteration
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
