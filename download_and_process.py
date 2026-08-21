@@ -11,11 +11,11 @@ DATA_DIR = 'datasets'
 
 
 NAME_URL_DICT_UCI = {
-    'adult': 'https://archive.ics.uci.edu/static/public/2/adult.zip',
-    'default': 'https://archive.ics.uci.edu/static/public/350/default+of+credit+card+clients.zip',
-    'shoppers': 'https://archive.ics.uci.edu/static/public/468/online+shoppers+purchasing+intention+dataset.zip',
+    # 'adult': 'https://archive.ics.uci.edu/static/public/2/adult.zip',
+    # 'default': 'https://archive.ics.uci.edu/static/public/350/default+of+credit+card+clients.zip',
+    # 'shoppers': 'https://archive.ics.uci.edu/static/public/468/online+shoppers+purchasing+intention+dataset.zip',
     'news': 'https://archive.ics.uci.edu/static/public/332/online+news+popularity.zip',
-    'bike': 'https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip'
+    # 'bike': 'https://archive.ics.uci.edu/static/public/275/bike+sharing+dataset.zip'
 }
 
 def unzip_file(zip_filepath, dest_path):
@@ -296,7 +296,7 @@ if __name__ == '__main__':
         if USE_VALIDATION:
             train_val_split(name, ratio = 0.8)
 
-        for mask_type in ['MCAR', 'MAR', 'MNAR_logistic_T2']:
+        for mask_type in ['MCAR']:
             for mask_p in [0.3]:
 
                 # Masks for the main train.csv / test.csv (unchanged from before)

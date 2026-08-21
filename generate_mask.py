@@ -595,7 +595,7 @@ if __name__ == '__main__':
     parser.add_argument('--mask_type', type=str, default='MNAR_logistic_T2', help='Type of missing data mechanism.')
     parser.add_argument('--mask_num', type=int, default=10)
     parser.add_argument('--p', type=float, default=0.3, help='Proportion of missing values.')
-    parser.add_argument('--split', type=str, default='test', choices=['test', 'validation'],
+    parser.add_argument('--split', type=str, default='validation', choices=['test', 'validation'],
                          help="Which held-out split to generate masks for: 'test' or 'validation'.")
     parser.add_argument('-reproduce', action='store_true', help='Reproduce masks.')
 
