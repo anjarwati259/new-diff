@@ -530,3 +530,78 @@ def denormalize_numeric_for_csv(pred_X, mean_X, std_X, num_num):
     pred_X_fixed[:, :num_num] = pred_X_fixed[:, :num_num] * std_X[:num_num] + mean_X[:num_num]
 
     return pred_X_fixed
+
+
+def round_numeric_for_csv(result_df, dataname, split_df_path, num_col_idx=None,
+                           decimals=4, save_path=None):
+    """
+    (FUNGSI TAMBAHAN - terpisah, tidak mengubah save_imputed_csv ataupun fungsi lain)
+
+    Membulatkan kolom numerik pada hasil imputasi (`result_df`, keluaran save_imputed_csv)
+    supaya rapi dibaca, dengan deteksi OTOMATIS per kolom:
+        - Kalau SEMUA nilai di kolom itu pada file CSV ASLI (train.csv/test.csv) adalah
+          bilangan bulat (mis. jumlah, tahun, kode numerik) -> dibulatkan ke integer.
+        - Kalau tidak (memang mengandung desimal, mis. harga/berat/ukuran) -> dibulatkan
+          ke `decimals` angka di belakang koma.
+
+    Deteksi integer/bukan dilakukan dari file CSV ASLI (bukan dari result_df), karena:
+        1. File CSV asli (train.csv/test.csv) sudah berisi nilai LENGKAP tanpa NaN -
+           "missing" di pipeline ini murni disimulasikan lewat mask untuk evaluasi,
+           jadi nilai asli di posisi manapun (observed maupun yang nanti disimulasikan
+           hilang) tetap valid dipakai sebagai referensi.
+        2. Hasil imputasi mentah (sebelum dibulatkan) hampir pasti TIDAK bulat walau
+           kolomnya sebenarnya integer, sehingga tidak bisa dipakai untuk deteksi.
+
+    Parameters
+    ----------
+    result_df : pd.DataFrame
+        DataFrame hasil dari save_imputed_csv (observed asli + missing hasil imputasi).
+    dataname : str
+        Nama dataset, dipakai membaca Info/{dataname}.json kalau num_col_idx tidak diberikan.
+    split_df_path : str
+        Path ke CSV asli (train.csv/test.csv) yang jadi referensi deteksi integer/bukan.
+    num_col_idx : list[int] atau None
+        Index kolom numerik. Kalau None, diambil dari Info/{dataname}.json.
+    decimals : int
+        Jumlah desimal untuk kolom yang TIDAK terdeteksi sebagai integer (default 4).
+    save_path : str atau None
+        Kalau diisi, hasil setelah pembulatan ditulis ulang (overwrite) ke path ini.
+
+    Return
+    ------
+    rounded_df : pd.DataFrame
+        SALINAN result_df dengan kolom numerik sudah dibulatkan (result_df asli tidak diubah).
+    """
+
+    if num_col_idx is None:
+        info_path = f'datasets/Info/{dataname}.json'
+        with open(info_path, 'r') as f:
+            info = json.load(f)
+        num_col_idx = info['num_col_idx']
+
+    orig_df = pd.read_csv(split_df_path)
+    cols = orig_df.columns
+    num_cols = cols[num_col_idx]
+
+    rounded_df = result_df.copy()
+
+    for col in num_cols:
+        orig_vals = orig_df[col].values.astype(np.float64)
+        # PENTING: pakai selisih absolut MURNI (bukan np.allclose dengan rtol default),
+        # karena rtol ikut menyesuaikan skala nilai - untuk kolom bernilai besar (mis.
+        # ratusan ribu), rtol default membuat toleransi jadi sangat longgar sehingga
+        # nilai desimal seperti 199999.99 salah terdeteksi sebagai "bulat".
+        is_int_col = np.max(np.abs(orig_vals - np.round(orig_vals))) < 1e-6
+
+        result_vals = rounded_df[col].values.astype(np.float64)
+
+        if is_int_col:
+            rounded_df[col] = np.round(result_vals).astype(np.int64)
+        else:
+            rounded_df[col] = np.round(result_vals, decimals)
+
+    if save_path is not None:
+        rounded_df.to_csv(save_path, index=False)
+        print(f'[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: {save_path}')
+
+    return rounded_df
