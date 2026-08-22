@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-from sklearn.model_selection import train_test_split
 import os
 import json
 import time
@@ -138,24 +137,17 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
     def fit(self, X, y, mask=None, X_val=None, y_val=None, mask_val=None):
         """
         Fit MRmD: temukan cut point optimal untuk tiap fitur.
-        X    : [N, n_cols] float — fitur numerik (data TRAIN)
-        y    : [N]         int   — label kelas (data TRAIN)
+        X    : [N, n_cols] float — fitur numerik (TRAIN)
+        y    : [N]         int   — label kelas (TRAIN)
         mask : [N, n_cols] bool, opsional — True = nilai HILANG (missing) di TRAIN.
-               [FIX - LEAKAGE] Jika diberikan, posisi missing DIKECUALIKAN
-               dari proses fitting (perhitungan cut point, MI, JS-divergence)
-               per kolom, agar MRmD tidak "melihat" nilai yang seharusnya
-               diimputasi.
+               [FIX-LEAKAGE] Jika diberikan, posisi missing DIKECUALIKAN dari
+               fitting (cut point, MI, JS-divergence) per kolom.
 
-        X_val, y_val, mask_val : opsional — data VALIDASI EKSTERNAL.
-               [BARU] Jika diberikan, dipakai LANGSUNG sebagai P_v (distribusi
-               validasi untuk JS-divergence) — MENGGANTIKAN random split
-               internal dari X. y_val saat ini tidak dipakai dalam
-               perhitungan (JS-divergence hanya butuh distribusi bin,
-               bukan label), tapi tetap diterima untuk konsistensi API /
-               keperluan tahap selanjutnya.
-
-               Jika X_val TIDAK diberikan, fallback ke perilaku LAMA:
-               random split internal dari X (val_size, random_state).
+        X_val, y_val, mask_val : [FIX-LEAKAGE] VALIDASI EKSTERNAL. Jika
+               diberikan, dipakai LANGSUNG sebagai pembanding distribusi
+               (JS-divergence) — MENGGANTIKAN random split internal dari X.
+               Jika X_val tidak diberikan, fallback ke random split internal
+               (val_size, random_state) seperti versi lama.
         """
         if hasattr(X, 'columns'):
             self.feature_names_in_ = np.array(X.columns)
@@ -171,23 +163,17 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
             mask = np.array(mask, dtype=bool)
 
         if X_val is not None:
-            # [BARU] Pakai validasi EKSTERNAL — tidak ada split internal.
-            # Seluruh X, y (dan mask) dipakai sebagai "train" untuk fitting;
-            # X_val (dan mask_val) dipakai sebagai pembanding distribusi.
+            # [FIX-LEAKAGE] Validasi eksternal — tidak ada split internal.
             X_tr, y_tr = X, y
             X_vl       = np.array(X_val, dtype=float)
             mask_tr    = mask
             mask_vl    = np.array(mask_val, dtype=bool) if mask_val is not None else None
 
             if self.verbose:
-                print(f'[MRmD] Menggunakan VALIDASI EKSTERNAL: '
-                      f'n_train={len(X_tr)}, n_val={len(X_vl)}, '
-                      f'n_features={n_features}')
+                print(f'[MRmD] Validasi eksternal: n_train={len(X_tr)}, '
+                      f'n_val={len(X_vl)}, n_features={n_features}')
         else:
-            # [FALLBACK - LAMA] Split internal: training vs validation
-            print('[MRmD] PERINGATAN: X_val tidak diberikan, fallback ke '
-                  'random split internal (val_size). Sebaiknya sertakan '
-                  'validasi eksternal untuk alur MRmD yang baru.')
+            # Fallback: split internal (perilaku lama)
             rng       = np.random.RandomState(self.random_state)
             val_n     = max(1, int(n_samples * self.val_size))
             val_idx   = rng.choice(n_samples, size=val_n, replace=False)
@@ -211,30 +197,31 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
         for j in range(n_features):
             x_tr_j = X_tr[:, j]
             x_vl_j = X_vl[:, j]
-            y_tr_j = y_tr
 
-            # [FIX - LEAKAGE] Kecualikan posisi missing (per kolom) dari
-            # data yang dipakai untuk fitting, agar cut point tidak
-            # dihitung dari nilai yang seharusnya "tidak diketahui".
+            # [FIX-LEAKAGE] Exclude posisi missing dari fitting kolom ini
             if mask_tr is not None or mask_vl is not None:
                 obs_tr_j = (~mask_tr[:, j]) if mask_tr is not None else np.ones(len(x_tr_j), dtype=bool)
                 obs_vl_j = (~mask_vl[:, j]) if mask_vl is not None else np.ones(len(x_vl_j), dtype=bool)
-                if obs_tr_j.sum() == 0:
-                    # Fallback: jika seluruh train observed kosong (kasus ekstrem),
-                    # tetap pakai semua data agar tidak error.
-                    obs_tr_j = np.ones_like(obs_tr_j, dtype=bool)
-                if obs_vl_j.sum() == 0:
-                    obs_vl_j = np.ones_like(obs_vl_j, dtype=bool)
-                x_tr_j = x_tr_j[obs_tr_j]
-                x_vl_j = x_vl_j[obs_vl_j]
-                y_tr_j = y_tr[obs_tr_j]
+                x_tr_j_obs = x_tr_j[obs_tr_j]
+                x_vl_j_obs = x_vl_j[obs_vl_j]
+                y_tr_obs   = y_tr[obs_tr_j]
+            else:
+                x_tr_j_obs = x_tr_j
+                x_vl_j_obs = x_vl_j
+                y_tr_obs   = y_tr
 
-            x_min = float(x_tr_j.min())
-            x_max = float(x_tr_j.max())
+            if len(x_tr_j_obs) == 0:
+                x_tr_j_obs = x_tr_j
+                y_tr_obs   = y_tr
+            if len(x_vl_j_obs) == 0:
+                x_vl_j_obs = x_vl_j
+
+            x_min = float(x_tr_j_obs.min())
+            x_max = float(x_tr_j_obs.max())
             self.x_min_.append(x_min)
             self.x_max_.append(x_max)
 
-            unique_tr = np.unique(x_tr_j)
+            unique_tr = np.unique(x_tr_j_obs)
             if len(unique_tr) <= 1:
                 self.cut_points_.append(np.array([]))
                 self.n_bins_.append(1)
@@ -242,7 +229,7 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
                     print(f'  [MRmD] Col {j}: konstan, skip.')
                 continue
 
-            cp = self._fit_one_attribute(x_tr_j, x_vl_j, y_tr_j,
+            cp = self._fit_one_attribute(x_tr_j_obs, x_vl_j_obs, y_tr_obs,
                                          unique_tr, x_min, x_max, j)
             self.cut_points_.append(cp)
             n_bins = len(cp) + 1
@@ -329,12 +316,9 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
 
         X_norm        : [N, n_cols]  — data normalisasi (skala (X-mean)/std)
         X_norm_binned : [N, n_cols]  — hasil transform (integer bin index)
-        missing_mask  : [N, n_cols] bool, opsional — True = nilai HILANG (missing).
-                        [FIX - LEAKAGE] Jika diberikan, baris yang di-mask missing
-                        DIKECUALIKAN dari perhitungan midpoint per kolom, agar
-                        midpoint (yang jadi acuan skor MAE/RMSE saat evaluasi)
-                        tidak dihitung dari nilai asli di posisi yang seharusnya
-                        diimputasi / tidak diketahui.
+        missing_mask  : [N, n_cols] bool, opsional — True = nilai HILANG.
+                        [FIX-LEAKAGE] Jika diberikan, posisi missing
+                        DIKECUALIKAN dari perhitungan midpoint per bin.
 
         Return : list[n_cols] of np.ndarray, tiap elemen panjang n_bins_[col]
         """
@@ -359,8 +343,7 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
                     mids[b] = float(X_norm[mask, col].mean())
                 else:
                     # Bin kosong (setelah exclude missing) → fallback ke
-                    # semua baris di bin tsb (walau termasuk missing), dan
-                    # jika tetap kosong, interpolasi linear.
+                    # semua baris di bin tsb, lalu interpolasi linear.
                     mask_all = (X_norm_binned[:, col] == b)
                     if mask_all.sum() > 0:
                         mids[b] = float(X_norm[mask_all, col].mean())
@@ -429,7 +412,7 @@ class SupervisedLearnableEmbeddingModel(nn.Module):
                  cat_dims_decode: list = None):
         """
         cat_dims        : jumlah baris tabel embedding (nn.Embedding) per kolom.
-                           [FIX - LEAKAGE] Bisa berisi +1 token khusus 'missing'
+                           [FIX-LEAKAGE] Bisa berisi +1 token khusus 'missing'
                            per kolom (lihat train_supervised_embedding_model),
                            supaya posisi yang di-mask missing bisa di-encode
                            dengan token netral, bukan nilai aslinya.
@@ -551,10 +534,10 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
     Sekarang cat_idx_array berisi SEMUA kolom (numerik bin + kategorikal).
 
     mask_array : [N, n_cols] bool, opsional — True = nilai HILANG (missing).
-        [FIX - LEAKAGE] Jika diberikan, posisi missing DIKECUALIKAN dari
-        reconstruction loss per kolom, agar embedding tidak "menghafal"
-        nilai asli di posisi yang seharusnya diimputasi (yang nanti dipakai
-        sebagai ground-truth evaluasi in-sample).
+        [FIX-LEAKAGE] Jika diberikan, posisi missing di-encode memakai TOKEN
+        KHUSUS 'missing' (bukan nilai aslinya), dan DIKECUALIKAN dari
+        reconstruction loss per kolom — supaya embedding tidak "menghafal"
+        nilai asli di posisi yang seharusnya diimputasi.
     """
     # Fix random seed agar hasil embedding reproducible setiap run
     torch.manual_seed(42)
@@ -562,18 +545,15 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
     if torch.cuda.is_available():
         torch.cuda.manual_seed(42)
 
-    # [FIX - LEAKAGE] Jika mask_array diberikan, tambahkan 1 token khusus
+    # [FIX-LEAKAGE] Jika mask_array diberikan, tambahkan 1 token khusus
     # 'missing' per kolom pada tabel embedding (num_embeddings = n_cat + 1).
-    # Saat fit, posisi yang di-mask missing akan di-encode memakai token ini
-    # (bukan nilai aslinya), sehingga nilai asli di posisi missing TIDAK ikut
-    # membentuk embedding vector z — baik untuk cabang classifier maupun
-    # cabang reconstruction. Decoder tetap memprediksi ke ruang kelas ASLI
+    # Posisi yang di-mask missing di-encode memakai token ini (bukan nilai
+    # aslinya), sehingga nilai asli di posisi missing TIDAK ikut membentuk
+    # embedding vector z. Decoder tetap memprediksi ke ruang kelas ASLI
     # (tanpa token missing) lewat cat_dims_decode.
     use_missing_token = mask_array is not None
     if use_missing_token:
         cat_dims_embed = [d + 1 for d in cat_dims]
-        # index token 'missing' tiap kolom = jumlah kelas asli kolom itu
-        # (posisi paling akhir pada tabel embedding yang sudah diperbesar)
         missing_idx = torch.tensor(cat_dims, dtype=torch.long, device=device)
     else:
         cat_dims_embed = cat_dims
@@ -638,11 +618,8 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             optimizer.zero_grad()
 
             if batch_observed is not None:
-                # [FIX - LEAKAGE] Ganti index pada posisi MISSING dengan token
-                # khusus 'missing' SEBELUM masuk ke encode(). Dengan begitu,
-                # nilai asli di posisi tsb tidak ikut membentuk z, sehingga
-                # tidak bisa "bocor" ke classifier maupun ke rekonstruksi
-                # kolom lain lewat representasi bersama z.
+                # [FIX-LEAKAGE] Ganti index pada posisi MISSING dengan token
+                # khusus 'missing' SEBELUM masuk ke encode().
                 batch_cat_in = batch_cat.clone()
                 miss_pos     = ~batch_observed
                 batch_cat_in[miss_pos] = missing_idx.unsqueeze(0).expand_as(batch_cat)[miss_pos]
@@ -654,8 +631,7 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             class_loss = ce_loss(class_logits, batch_labels)
 
             if batch_observed is not None:
-                # [FIX - LEAKAGE] recon_loss hanya dihitung pada posisi
-                # OBSERVED (bukan missing) per kolom, per sample.
+                # [FIX-LEAKAGE] recon_loss HANYA dihitung pada posisi OBSERVED
                 col_losses = []
                 for i in range(model.n_cols):
                     obs_i = batch_observed[:, i]
@@ -858,271 +834,7 @@ def decode_num_from_embedding(model: SupervisedLearnableEmbeddingModel,
 
 
 # ===========================================================================
-#  Load TRAIN_NEW + VALIDATION (sudah disiapkan manual, TIDAK di-generate)
-#  [DIPERBAIKI] Sebelumnya fungsi ini melakukan random split sendiri — itu
-#  KELIRU, karena file TRAIN_NEW/VALIDATION beserta mask-nya SUDAH disiapkan
-#  di luar (manual), jadi di sini murni LOAD, tidak ada proses split lagi.
-#
-#  Struktur folder aktual (sesuai konfirmasi):
-#    datasets/{dataname}/validation/train.csv                              (TRAIN_NEW, 56%)
-#    datasets/{dataname}/validation/val.csv                                (VALIDATION, 14%)
-#    datasets/{dataname}/masks/validation/rate{ratio}/{mask_type}/train_mask_{idx}.npy
-#    datasets/{dataname}/masks/validation/rate{ratio}/{mask_type}/val_mask_{idx}.npy
-# ===========================================================================
-
-def load_validation_split(dataname, mask_type='MCAR', ratio='30', idx=0):
-    """
-    Load TRAIN_NEW & VALIDATION (data + mask) yang SUDAH disiapkan manual.
-    Tidak melakukan split apapun — murni membaca file dari disk.
-
-    Return
-    ------
-    train_new_df, val_df     : pd.DataFrame
-    train_new_mask, val_mask : np.ndarray [N, total_cols] bool (True=missing)
-    """
-    data_dir = f'datasets/{dataname}'
-
-    train_new_csv = f'{data_dir}/validation/train.csv'
-    val_csv       = f'{data_dir}/validation/val.csv'
-
-    val_mask_dir        = f'{data_dir}/masks/validation/rate{ratio}/{mask_type}'
-    train_new_mask_path = f'{val_mask_dir}/train_mask_{idx}.npy'
-    val_mask_path       = f'{val_mask_dir}/val_mask_{idx}.npy'
-
-    for p in [train_new_csv, val_csv, train_new_mask_path, val_mask_path]:
-        if not os.path.exists(p):
-            raise FileNotFoundError(
-                f'[load_validation_split] File tidak ditemukan: {p}\n'
-                f'Pastikan TRAIN_NEW/VALIDATION (data & mask) sudah disiapkan '
-                f'di lokasi tsb sebelum menjalankan MRmD.'
-            )
-
-    train_new_df = pd.read_csv(train_new_csv)
-    val_df       = pd.read_csv(val_csv)
-    train_new_mask = np.load(train_new_mask_path)
-    val_mask       = np.load(val_mask_path)
-
-    print(f'[Validation] Loaded TRAIN_NEW ({len(train_new_df)} baris) & '
-          f'VALIDATION ({len(val_df)} baris) dari {data_dir}/validation/')
-    print(f'[Validation] Mask di-load dari {val_mask_dir}/')
-
-    assert train_new_mask.shape[0] == len(train_new_df), (
-        f'Baris train_new.csv ({len(train_new_df)}) tidak cocok dengan '
-        f'train_mask ({train_new_mask.shape[0]}).'
-    )
-    assert val_mask.shape[0] == len(val_df), (
-        f'Baris val.csv ({len(val_df)}) tidak cocok dengan '
-        f'val_mask ({val_mask.shape[0]}).'
-    )
-
-    return train_new_df, val_df, train_new_mask, val_mask
-
-
-# ===========================================================================
-#  Load Dataset — VERSI MRmD-ONLY [BARU]
-#  [HIDE] Tahap embedding (SupervisedLearnableEmbeddingModel) dan EM/diffusion
-#  SENGAJA di-nonaktifkan dulu. Fokus: validasi alur MRmD dengan validation
-#  set eksternal yang persisten. Untuk versi lengkap (dengan embedding),
-#  lihat fungsi load_dataset() di bawah — TIDAK DIHAPUS, hanya tidak dipanggil.
-# ===========================================================================
-
-def load_dataset_mrmd_only(dataname, idx=0, mask_type='MCAR', ratio='30',
-                            random_state=42):
-    """
-    Load dataset & jalankan HANYA tahap MRmD discretization.
-
-    Alur scope fitting (sesuai desain yang disepakati):
-      - MRmD cut points      : fit dari TRAIN_NEW (56%) + VALIDATION (14%)
-                                (transform-only ke TRAIN_FULL & TEST)
-      - Mean/std, LabelEncoder : fit dari TRAIN_FULL (70%)
-
-    Return : dict berisi semua objek/array yang relevan untuk tahap MRmD.
-    """
-    ratio = str(ratio)
-    data_dir  = f'datasets/{dataname}'
-    info_path = f'datasets/Info/{dataname}.json'
-
-    with open(info_path, 'r') as f:
-        info = json.load(f)
-
-    num_col_idx    = info['num_col_idx']
-    cat_col_idx    = info['cat_col_idx']
-    target_col_idx = info['target_col_idx']
-
-    train_path      = f'{data_dir}/train.csv'
-    test_path       = f'{data_dir}/test.csv'
-    train_mask_path = f'{data_dir}/masks/rate{ratio}/{mask_type}/train_mask_{idx}.npy'
-    test_mask_path  = f'{data_dir}/masks/rate{ratio}/{mask_type}/test_mask_{idx}.npy'
-
-    # ── Load TRAIN_FULL (70%) & TEST (30%) — TIDAK BERUBAH dari sebelumnya ──
-    train_full_df = pd.read_csv(train_path)
-    test_df       = pd.read_csv(test_path)
-    train_full_mask = np.load(train_mask_path)
-    test_mask       = np.load(test_mask_path)
-
-    # ── Load TRAIN_NEW (56%) + VALIDATION (14%) — SUDAH disiapkan manual ───
-    train_new_df, val_df, train_new_mask, val_mask = load_validation_split(
-        dataname, mask_type, ratio, idx
-    )
-
-    cols = train_full_df.columns
-
-    # ── Fitur numerik (nilai float asli) ─────────────────────────────────
-    train_full_num_raw = train_full_df[cols[num_col_idx]].values.astype(np.float32)
-    test_num_raw       = test_df[cols[num_col_idx]].values.astype(np.float32)
-    train_new_num_raw  = train_new_df[cols[num_col_idx]].values.astype(np.float32)
-    val_num_raw        = val_df[cols[num_col_idx]].values.astype(np.float32)
-
-    n_num_cols = len(num_col_idx)
-
-    # ── Label (untuk MI di MRmD) — LabelEncoder fit dari TRAIN_FULL (70%) ──
-    # [Scope fitting] Sesuai kesepakatan: mean/std & LabelEncoder fit dari
-    # TRAIN_FULL, BUKAN TRAIN_NEW. TRAIN_NEW & VALIDATION adalah subset dari
-    # TRAIN_FULL, jadi encoder yang sama bisa langsung dipakai (tidak ada
-    # risiko kategori tak dikenal di subset-nya sendiri).
-    train_full_y = train_full_df[cols[target_col_idx]]
-    label_encoder = LabelEncoder()
-    label_encoder.fit(train_full_y.values.ravel().astype(str))
-
-    def _encode_labels(df):
-        return label_encoder.transform(df[cols[target_col_idx]].values.ravel().astype(str))
-
-    train_new_labels = _encode_labels(train_new_df)
-    val_labels        = _encode_labels(val_df)
-
-    print(f'[Dataset-MRmD] n_classes={len(label_encoder.classes_)}, '
-          f'n_train_full={len(train_full_df)}, n_test={len(test_df)}, '
-          f'n_train_new={len(train_new_df)}, n_val={len(val_df)}')
-
-    if n_num_cols == 0:
-        print('[Dataset-MRmD] Tidak ada kolom numerik, MRmD dilewati.')
-        return {
-            'mrmd': None, 'n_num_cols': 0,
-            'label_encoder': label_encoder,
-            'num_col_idx': num_col_idx, 'cat_col_idx': cat_col_idx,
-            'target_col_idx': target_col_idx, 'cols': cols,
-            'train_full_mask': train_full_mask, 'test_mask': test_mask,
-            'train_new_mask': train_new_mask, 'val_mask': val_mask,
-            'train_full_df': train_full_df, 'test_df': test_df,
-            'train_new_df': train_new_df, 'val_df': val_df,
-            'train_full_num_bin': np.zeros((len(train_full_df), 0), dtype=np.int64),
-            'test_num_bin':       np.zeros((len(test_df), 0), dtype=np.int64),
-            'train_new_num_bin':  np.zeros((len(train_new_df), 0), dtype=np.int64),
-            'val_num_bin':        np.zeros((len(val_df), 0), dtype=np.int64),
-            'bin_midpoints': [],
-        }
-
-    # ── Mask level kolom numerik, per subset ────────────────────────────
-    train_full_num_mask = train_full_mask[:, num_col_idx].astype(bool)
-    test_num_mask        = test_mask[:, num_col_idx].astype(bool)
-    train_new_num_mask   = train_new_mask[:, num_col_idx].astype(bool)
-    val_num_mask         = val_mask[:, num_col_idx].astype(bool)
-
-    # ── Mean/std normalisasi — DIHITUNG DARI TRAIN_FULL (70%) ───────────
-    # [Scope fitting] TIDAK dari TRAIN_NEW — supaya konsisten dipakai
-    # normalisasi TEST juga (sesuai kesepakatan).
-    mask_obs = (~train_full_num_mask).astype(np.float32)
-    mask_sum = mask_obs.sum(0)
-    mask_sum[mask_sum == 0] = 1.0
-    num_mean = (train_full_num_raw * mask_obs).sum(0) / mask_sum
-    num_var  = ((train_full_num_raw - num_mean) ** 2 * mask_obs).sum(0) / mask_sum
-    num_std  = np.sqrt(num_var)
-    num_std[num_std == 0] = 1.0
-
-    train_full_num_norm = (train_full_num_raw - num_mean) / num_std
-    test_num_norm       = (test_num_raw       - num_mean) / num_std
-    train_new_num_norm  = (train_new_num_raw  - num_mean) / num_std
-    val_num_norm        = (val_num_raw        - num_mean) / num_std
-
-    # ── MRmD Discretization — fit dari TRAIN_NEW (56%) + VALIDATION (14%) ─
-    # [Cache key FIX] Sertakan ratio & mask_type — cut points SPESIFIK
-    # untuk kombinasi ratio+mask_type tertentu (posisi missing berbeda).
-    mrmd_cache_path = f'cache/{dataname}/rate{ratio}/{mask_type}/mrmd_{idx}.pkl'
-    os.makedirs(os.path.dirname(mrmd_cache_path), exist_ok=True)
-
-    if os.path.exists(mrmd_cache_path):
-        print(f'[MRmD] Cache ditemukan di {mrmd_cache_path}, skip fitting.')
-        with open(mrmd_cache_path, 'rb') as f:
-            mrmd = pickle.load(f)
-        t_mrmd = 0.0
-    else:
-        print(f'[MRmD] Menjalankan MRmD discretization pada {n_num_cols} '
-              f'kolom numerik (fit: TRAIN_NEW+VALIDATION) ...')
-        t_mrmd_start = time.time()
-        mrmd = MRmDDiscretizer(N_D=50, random_state=random_state, verbose=False)
-        mrmd.fit(
-            train_new_num_raw, train_new_labels,
-            mask=train_new_num_mask,
-            X_val=val_num_raw, y_val=val_labels, mask_val=val_num_mask,
-        )
-        t_mrmd = time.time() - t_mrmd_start
-
-        with open(mrmd_cache_path, 'wb') as f:
-            pickle.dump(mrmd, f)
-        print(f'[MRmD] Cache disimpan ke {mrmd_cache_path}')
-        print(f'[MRmD] Waktu komputasi diskritisasi: {t_mrmd:.4f}s')
-
-    mrmd.summary()
-
-    # ── Transform-ONLY (bukan fit ulang) ke semua subset ────────────────
-    train_full_num_bin = mrmd.transform(train_full_num_raw)
-    test_num_bin        = mrmd.transform(test_num_raw)
-    train_new_num_bin   = mrmd.transform(train_new_num_raw)
-    val_num_bin         = mrmd.transform(val_num_raw)
-
-    # ── Bin midpoints (skala normalisasi TRAIN_FULL) ────────────────────
-    bin_midpoints = mrmd.get_bin_midpoints(
-        train_full_num_norm, train_full_num_bin,
-        missing_mask=train_full_num_mask
-    )
-
-    print(f'[MRmD] n_bins per kolom: {mrmd.n_bins_}')
-    print(f'[MRmD] Total bins: {sum(mrmd.n_bins_)}')
-
-    return {
-        'mrmd':            mrmd,
-        'n_num_cols':      n_num_cols,
-        't_mrmd':          t_mrmd,
-        'label_encoder':   label_encoder,
-        'num_mean':        num_mean,
-        'num_std':         num_std,
-        'bin_midpoints':   bin_midpoints,
-
-        'num_col_idx':     num_col_idx,
-        'cat_col_idx':     cat_col_idx,
-        'target_col_idx':  target_col_idx,
-        'cols':            cols,
-
-        'train_full_num_bin': train_full_num_bin,
-        'test_num_bin':       test_num_bin,
-        'train_new_num_bin':  train_new_num_bin,
-        'val_num_bin':        val_num_bin,
-
-        'train_full_num_norm': train_full_num_norm,
-        'test_num_norm':       test_num_norm,
-        'train_new_num_norm':  train_new_num_norm,
-        'val_num_norm':        val_num_norm,
-
-        'train_full_num_mask': train_full_num_mask,
-        'test_num_mask':       test_num_mask,
-        'train_new_num_mask':  train_new_num_mask,
-        'val_num_mask':        val_num_mask,
-
-        'train_full_mask': train_full_mask, 'test_mask': test_mask,
-        'train_new_mask':  train_new_mask,  'val_mask':  val_mask,
-
-        'train_full_df': train_full_df, 'test_df': test_df,
-        'train_new_df':  train_new_df,  'val_df':  val_df,
-    }
-
-
-# ===========================================================================
-#  [HIDE] Load Dataset — VERSI LENGKAP (dengan Embedding + siap untuk EM)
-#  Fungsi ini TIDAK DIHAPUS, hanya TIDAK DIPANGGIL dari main_mrmd.py untuk
-#  sementara. Nanti saat tahap embedding & EM diaktifkan lagi, fungsi ini
-#  perlu disesuaikan agar memakai split TRAIN_NEW/VALIDATION + transform-only
-#  ke TRAIN_FULL, mengikuti pola yang sudah diimplementasikan di
-#  load_dataset_mrmd_only() di atas.
+#  Load Dataset
 # ===========================================================================
 
 def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
@@ -1178,10 +890,12 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
     target_col_idx = info['target_col_idx']
 
     data_path       = f'{data_dir}/data.csv'
-    train_path      = f'{data_dir}/train.csv'
-    test_path       = f'{data_dir}/test.csv'
-    train_mask_path = f'{data_dir}/masks/rate{ratio}/{mask_type}/train_mask_{idx}.npy'
-    test_mask_path  = f'{data_dir}/masks/rate{ratio}/{mask_type}/test_mask_{idx}.npy'
+    # [GANTI] 'train' = TRAIN_NEW (56%), 'test' = VALIDATION (14%) —
+    # HANYA pengambilan dataset yang berubah, logic lain di bawah tetap sama.
+    train_path      = f'{data_dir}/validation/train.csv'
+    test_path       = f'{data_dir}/validation/val.csv'
+    train_mask_path = f'{data_dir}/masks/validation/rate{ratio}/{mask_type}/train_mask_{idx}.npy'
+    test_mask_path  = f'{data_dir}/masks/validation/rate{ratio}/{mask_type}/val_mask_{idx}.npy'
 
     data_df  = pd.read_csv(data_path)
     train_df = pd.read_csv(train_path)
@@ -1201,38 +915,13 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
     train_y = train_df[cols[target_col_idx]]
     test_y  = test_df[cols[target_col_idx]]
 
-    # [FIX - LEAKAGE] LabelEncoder untuk target HANYA di-fit pada train_y,
-    # bukan gabungan train+test. Fit pada data gabungan berarti informasi
-    # test set (kelas apa saja yang ada di test) ikut "dilihat" saat
-    # menyiapkan preprocessing untuk train — itu train/test leakage.
-    #
-    # Jika ada nilai target di test yang TIDAK muncul di train, nilai
-    # tersebut dipetakan ke bucket khusus 'unknown' (index = n_classes)
-    # alih-alih menyebabkan error atau diam-diam "mengintip" test.
     label_encoder = LabelEncoder()
-    label_encoder.fit(train_y.values.ravel().astype(str))
-    n_classes = len(label_encoder.classes_)
-    known_label_classes = set(label_encoder.classes_)
-
-    def _safe_label_transform(series, encoder, known_classes, unknown_idx):
-        vals = series.values.ravel().astype(str)
-        out  = np.empty(len(vals), dtype=np.int64)
-        unknown_count = 0
-        for i, v in enumerate(vals):
-            if v in known_classes:
-                out[i] = encoder.transform([v])[0]
-            else:
-                out[i] = unknown_idx
-                unknown_count += 1
-        return out, unknown_count
+    all_labels    = pd.concat([train_y, test_y]).values.ravel()
+    label_encoder.fit(all_labels.astype(str))
 
     train_labels = label_encoder.transform(train_y.values.ravel().astype(str))
-    test_labels, n_unknown_test_labels = _safe_label_transform(
-        test_y, label_encoder, known_label_classes, unknown_idx=n_classes
-    )
-    if n_unknown_test_labels > 0:
-        print(f'[Dataset] PERINGATAN: {n_unknown_test_labels} label target di '
-              f'test tidak muncul di train, dipetakan ke bucket "unknown".')
+    test_labels  = label_encoder.transform(test_y.values.ravel().astype(str))
+    n_classes    = len(label_encoder.classes_)
 
     print(f'[Dataset] Detected {n_classes} classes for supervised learning')
     print(f'[Dataset] Classes: {label_encoder.classes_}')
@@ -1261,8 +950,11 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
         test_num  = test_num_norm.astype(np.float32)
 
         # ── MRmD Discretization (dengan cache) ──────────────────────────
-        mrmd_cache_path = f'cache/{dataname}/mrmd.pkl'
-        os.makedirs(f'cache/{dataname}', exist_ok=True)
+        # [FIX-LEAKAGE] Cache key sekarang menyertakan ratio & mask_type —
+        # cut points SPESIFIK untuk kombinasi ratio+mask_type (posisi missing
+        # berbeda antar kombinasi, jadi tidak boleh saling reuse cache).
+        mrmd_cache_path = f'cache/{dataname}/rate{ratio}/{mask_type}/mrmd_{idx}.pkl'
+        os.makedirs(os.path.dirname(mrmd_cache_path), exist_ok=True)
 
         if os.path.exists(mrmd_cache_path):
             # Load cut points dari cache, skip fitting
@@ -1272,14 +964,18 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
             t_mrmd = 0.0
             print(f'[MRmD] Cut points di-load. n_bins per kolom: {mrmd.n_bins_}')
         else:
-            # Fit MRmD pada data RAW train (bukan normalisasi) dengan label
+            # [FIX-LEAKAGE] Fit MRmD dari 'train' (TRAIN_NEW) + validasi
+            # eksternal 'test' (VALIDATION) — MENGGANTIKAN random split
+            # internal. Posisi missing (mask) DIKECUALIKAN dari fitting.
             print(f'[MRmD] Cache belum ada. Menjalankan MRmD discretization '
-                  f'pada {n_num_cols} kolom numerik ...')
+                  f'pada {n_num_cols} kolom numerik (fit: train+test) ...')
             t_mrmd_start = time.time()
-            mrmd = MRmDDiscretizer(val_size=0.125, N_D=50, random_state=42, verbose=False)
-            # [FIX - LEAKAGE] Sertakan num_mask_train agar MRmD hanya fit
-            # pada nilai yang OBSERVED, bukan posisi yang di-mask missing.
-            mrmd.fit(train_num_raw, train_labels, mask=num_mask_train)
+            mrmd = MRmDDiscretizer(N_D=50, random_state=42, verbose=False)
+            mrmd.fit(
+                train_num_raw, train_labels,
+                mask=num_mask_train,
+                X_val=test_num_raw, y_val=test_labels, mask_val=test_mask[:, num_col_idx].astype(bool),
+            )
             t_mrmd = time.time() - t_mrmd_start
 
             # Simpan objek mrmd (berisi cut_points_, x_min_, x_max_, n_bins_)
@@ -1288,18 +984,17 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
             print(f'[MRmD] Cache disimpan ke {mrmd_cache_path}')
             print(f'[MRmD] Waktu komputasi diskritisasi: {t_mrmd:.4f}s')
 
-        # Transform train & test pakai cut points yang sama (fit atau cache)
+        # Transform 'train' & 'test' pakai cut points yang sama (TRANSFORM-ONLY,
+        # tidak fit ulang di sini)
         train_num_bin = mrmd.transform(train_num_raw)   # [N_train, n_num_cols] int64
         test_num_bin  = mrmd.transform(test_num_raw)    # [N_test,  n_num_cols] int64
 
         # Hitung bin midpoints dalam skala NORMALISASI
-        # (dipakai saat decoding: bin index → nilai kontinu untuk MAE/RMSE)
-        # [FIX - LEAKAGE] Sertakan num_mask_train agar baris yang di-mask
-        # missing tidak ikut menyumbang ke rata-rata midpoint bin — kalau
-        # tidak, nilai asli di posisi yang mau diimputasi bisa "bocor" ke
-        # midpoint yang justru dipakai sebagai acuan skor MAE/RMSE.
-        bin_midpoints = mrmd.get_bin_midpoints(train_num_norm, train_num_bin,
-                                               missing_mask=num_mask_train)
+        # [FIX-LEAKAGE] Posisi missing (num_mask_train) dikecualikan dari
+        # perhitungan midpoint per bin.
+        bin_midpoints = mrmd.get_bin_midpoints(
+            train_num_norm, train_num_bin, missing_mask=num_mask_train
+        )
 
         print(f'[MRmD] n_bins per kolom: {mrmd.n_bins_}')
         print(f'[MRmD] Total bins: {sum(mrmd.n_bins_)}')
@@ -1321,51 +1016,22 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
 
     if len(cat_col_idx) > 0:
         cat_columns = cols[cat_col_idx]
+        data_cat    = data_df[cat_columns].astype(str)
         train_cat   = train_df[cat_columns].astype(str)
         test_cat    = test_df[cat_columns].astype(str)
 
-        # [FIX - LEAKAGE] LabelEncoder per kolom kategorikal SEKARANG
-        # HANYA di-fit pada train_cat, bukan data_df (gabungan train+test).
-        # Fit pada gabungan train+test berarti vocabulary kategori dibangun
-        # dengan "mengintip" nilai-nilai yang ada di test set — itu
-        # train/test leakage.
-        #
-        # Konsekuensinya: kalau ada kategori di test yang TIDAK pernah
-        # muncul di train, kategori tsb dipetakan ke 1 bucket khusus
-        # 'unknown' (index terakhir = n_kategori_train) alih-alih error.
-        # Ini juga konsisten dengan pola token 'missing' yang sudah ada di
-        # train_supervised_embedding_model — sama-sama menambah 1 slot
-        # embedding ekstra per kolom untuk kasus "nilai tak dikenal".
         encoders = {}
         for col in cat_columns:
             le = LabelEncoder()
-            le.fit(train_cat[col])
+            le.fit(data_cat[col])
             encoders[col] = le
-
-            known_classes = set(le.classes_)
-            unknown_idx   = len(le.classes_)
-            # +1 slot untuk bucket 'unknown' (kategori test yang tak
-            # muncul di train)
-            cat_dims_cat.append(len(le.classes_) + 1)
-
-            train_idx_col = le.transform(train_cat[col]).astype(np.int64)
-
-            test_vals   = test_cat[col].values
-            test_idx_col = np.empty(len(test_vals), dtype=np.int64)
-            n_unknown   = 0
-            for i, v in enumerate(test_vals):
-                if v in known_classes:
-                    test_idx_col[i] = le.transform([v])[0]
-                else:
-                    test_idx_col[i] = unknown_idx
-                    n_unknown += 1
-            if n_unknown > 0:
-                print(f'[Dataset] PERINGATAN: kolom "{col}" — {n_unknown} '
-                      f'nilai di test tidak muncul di train, dipetakan ke '
-                      f'bucket "unknown".')
-
-            train_cat_idx_list.append(train_idx_col)
-            test_cat_idx_list.append(test_idx_col)
+            cat_dims_cat.append(len(le.classes_))
+            train_cat_idx_list.append(
+                le.transform(train_cat[col]).astype(np.int64)
+            )
+            test_cat_idx_list.append(
+                le.transform(test_cat[col]).astype(np.int64)
+            )
 
         train_cat_idx = np.stack(train_cat_idx_list, axis=1)
         test_cat_idx  = np.stack(test_cat_idx_list,  axis=1)
@@ -1395,10 +1061,8 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # ── Mask level-kolom [num_mask | cat_mask] ─────────────────────────────
-    # [FIX - LEAKAGE] Dihitung DI SINI (sebelum training embedding) agar bisa
-    # dipakai untuk mengecualikan posisi missing dari training embedding.
-    # Urutan kolom sama dengan all_dims / train_all_idx: numerik dulu, lalu kategorikal.
+    # ── Mask untuk embedding leakage-fix (dipindah ke sini, sebelum training,
+    #    supaya bisa dilewatkan sebagai mask_array) ──────────────────────────
     train_num_mask = train_mask[:, num_col_idx].astype(bool) if n_num_cols > 0 else np.zeros((len(train_df), 0), dtype=bool)
     train_cat_mask = train_mask[:, cat_col_idx].astype(bool) if len(cat_col_idx) > 0 else np.zeros((len(train_df), 0), dtype=bool)
     test_num_mask  = test_mask[:, num_col_idx].astype(bool)  if n_num_cols > 0 else np.zeros((len(test_df),  0), dtype=bool)
@@ -1436,7 +1100,7 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
         mlp_ratio     = 1.5,
         noise_std     = noise_std,
         patience      = 40,
-        mask_array    = train_all_mask,   # [FIX - LEAKAGE] posisi missing dikecualikan dari recon loss
+        mask_array    = train_all_mask,   # [FIX-LEAKAGE] posisi missing dikecualikan dari recon loss
     )
     t_emb_end = time.time()
     t_emb = t_emb_end - t_emb_start
@@ -1453,12 +1117,6 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
     # Karena numerik sudah masuk embedding, len_num = 0 di main
     train_X = train_all_emb
     test_X  = test_all_emb
-
-    # ── Buat extended mask ────────────────────────────────────────────────
-    # Mask asli: [N, total_original_cols]
-    # Extended mask: [N, total_emb_dim] — diperluas sesuai emb_sizes
-    # (train_num_mask, train_cat_mask, train_all_mask, dst. sudah dihitung
-    #  di atas, sebelum training embedding — lihat blok [FIX - LEAKAGE])
 
     emb_sizes_arr = np.array(emb_sizes, dtype=int)
 
