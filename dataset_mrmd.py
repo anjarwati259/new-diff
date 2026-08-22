@@ -1008,6 +1008,9 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
         bin_midpoints = []
         mrmd          = None
         t_mrmd        = 0.0
+        # [BARU - untuk CSV export] Tidak ada kolom numerik -> tidak ada mean/std
+        num_mean = None
+        num_std  = None
 
     # ── Encoding kolom kategorikal ────────────────────────────────────────
     cat_dims_cat           = []
@@ -1038,6 +1041,8 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
     else:
         train_cat_idx = np.zeros((len(train_df), 0), dtype=np.int64)
         test_cat_idx  = np.zeros((len(test_df),  0), dtype=np.int64)
+        # [BARU - untuk CSV export] Tidak ada kolom kategorikal -> tidak ada encoder
+        encoders = {}
 
     # ── Gabungkan: [num_bin | cat_idx] → satu array idx untuk embedding ──
     # Urutan: numerik (bin) DULU, lalu kategorikal — konsisten di seluruh pipeline
@@ -1152,7 +1157,16 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
             bin_midpoints, # [BARU] list[n_num_cols] midpoint per bin, skala norm
             n_num_cols,    # [BARU] jumlah kolom numerik
             t_mrmd,        # [BARU] waktu komputasi MRmD discretization (detik)
-            t_emb)         # [BARU] waktu komputasi embedding training (detik)
+            t_emb,         # [BARU] waktu komputasi embedding training (detik)
+            # ─────────────────────────────────────────────────────────────
+            # [BARU - untuk CSV export] Ditambahkan di AKHIR tuple supaya
+            # TIDAK mengubah urutan/isi nilai yang sudah ada di atas.
+            # Dipakai HANYA oleh save_imputed_csv_mrmd() untuk mengembalikan
+            # numerik ke skala asli & mendekode label kategorikal asli.
+            # Tidak menyentuh training/evaluasi yang sudah berjalan.
+            num_mean,      # mean numerik (skala asli) per kolom, atau None
+            num_std,       # std  numerik (skala asli) per kolom, atau None
+            encoders)      # dict {nama_kolom: LabelEncoder} kategorikal, atau {}
 
 
 def mean_std(data, mask):
@@ -1304,3 +1318,302 @@ def get_eval(dataname, X_recon, X_true, truth_all_idx,
             acc = correct_total / total_missing
 
     return mae, rmse, acc
+
+
+# ===========================================================================
+#  [BARU] Penyimpanan hasil imputasi ke CSV
+#
+#  Fungsi-fungsi di bawah ini TERPISAH dari pipeline training/evaluasi di
+#  atas (load_dataset, train_supervised_embedding_model, get_eval, dst).
+#  Ditambahkan mengikuti pola yang sama seperti pada dataset.py (versi
+#  binary-encoding/DiffPuter original), disesuaikan untuk pipeline
+#  embedding + MRmD:
+#    - Numerik   : embedding -> decode_num_from_embedding (bin midpoint,
+#                  skala normalisasi) -> denormalisasi ke skala asli
+#                  memakai num_mean/num_std.
+#    - Kategorik : embedding -> decode_cat_from_embedding (argmax logits,
+#                  integer index) -> inverse_transform via LabelEncoder
+#                  (cat_encoders) -> label kategori asli.
+#  Tidak mengubah/menyentuh fungsi atau alur lain yang sudah ada di atas.
+# ===========================================================================
+
+def select_best_iteration(maes, rmses, accs):
+    """
+    Memilih iterasi terbaik berdasarkan kombinasi MAE, RMSE, dan Accuracy
+    (out-of-sample). [SAMA PERSIS dengan versi pada dataset.py]
+
+    Karena ketiga metrik punya skala/arah yang berbeda (MAE & RMSE: makin
+    kecil makin baik, Accuracy: makin besar makin baik), pemilihan
+    dilakukan dengan cara ranking:
+        1. Ranking tiap metrik di semua iterasi (rank 1 = paling baik).
+        2. Jumlahkan rank ketiga metrik -> total_rank.
+        3. Iterasi dengan total_rank terkecil dipilih sebagai iterasi terbaik.
+
+    Jika Accuracy tidak tersedia (semua NaN, misal dataset tanpa kolom
+    kategorik), Accuracy diabaikan dari perhitungan (dianggap seri di
+    semua iterasi).
+
+    Parameters
+    ----------
+    maes, rmses, accs : list atau np.ndarray
+        Nilai metrik out-of-sample per iterasi (index sejajar dengan
+        urutan iterasi).
+
+    Return
+    ------
+    best_idx : int
+        Index iterasi terbaik (0-based, sesuai urutan pada
+        `maes`/`rmses`/`accs`).
+    """
+
+    maes  = pd.Series(np.asarray(maes,  dtype=np.float64))
+    rmses = pd.Series(np.asarray(rmses, dtype=np.float64))
+    accs  = pd.Series(np.asarray(accs,  dtype=np.float64))
+
+    mae_rank  = maes.rank(method='min')
+    rmse_rank = rmses.rank(method='min')
+
+    if accs.isna().all():
+        acc_rank = pd.Series(np.zeros(len(accs)))
+    else:
+        # Accuracy makin besar makin baik -> rank berdasarkan nilai negatifnya
+        acc_rank = (-accs).rank(method='min')
+
+    total_rank = mae_rank + rmse_rank + acc_rank
+    best_idx   = int(total_rank.idxmin())
+
+    return best_idx
+
+
+def _decode_and_denormalize_numeric(pred_X_emb, emb_model, bin_midpoints,
+                                    n_num_cols, num_mean, num_std, device):
+    """
+    Decode embedding -> nilai numerik kontinu, lalu kembalikan ke skala asli.
+
+    pred_X_emb : [N, total_emb_dim] — embedding hasil rekonstruksi
+                 (SUDAH didenormalisasi ke skala embedding asli, sama
+                 seperti `pred_X` yang dipakai sebagai `X_recon` di get_eval).
+    Return : np.ndarray [N, n_num_cols] skala ASLI dataset, atau array
+             kosong shape (N, 0) jika n_num_cols == 0.
+    """
+    N = pred_X_emb.shape[0]
+    if n_num_cols == 0 or bin_midpoints is None or emb_model is None:
+        return np.zeros((N, 0), dtype=np.float32)
+
+    num_pred_norm = decode_num_from_embedding(
+        emb_model, pred_X_emb, bin_midpoints, n_num_cols, device
+    )  # skala normalisasi (X - mean) / std
+
+    num_mean_arr = np.asarray(num_mean)
+    num_std_arr  = np.asarray(num_std)
+    num_pred_orig = num_pred_norm * num_std_arr + num_mean_arr
+
+    return num_pred_orig.astype(np.float32)
+
+
+def save_imputed_csv_mrmd(dataname, pred_X, mask, split_df_path, save_path,
+                          emb_model, emb_sizes, bin_midpoints, n_num_cols,
+                          num_mean, num_std, cat_encoders, device, oos=False):
+    """
+    Simpan hasil imputasi (pipeline MRmD + embedding) ke file CSV dengan
+    struktur kolom asli dataset. Analog dengan `save_imputed_csv` pada
+    dataset.py (versi binary-encoding), disesuaikan untuk embedding.
+
+    Aturan penyusunan nilai:
+      - Posisi yang OBSERVED (mask == False) -> diambil dari nilai ASLI
+        (train.csv / val.csv).
+      - Posisi yang MISSING  (mask == True)  -> diambil dari hasil decode
+        embedding:
+            * kolom numerik   -> decode_num_from_embedding (bin midpoint,
+                                  skala normalisasi) lalu didenormalisasi
+                                  ke skala asli dengan num_mean/num_std.
+            * kolom kategorik -> decode_cat_from_embedding (argmax logits,
+                                  integer index) lalu di-inverse_transform
+                                  memakai LabelEncoder pada `cat_encoders`
+                                  untuk mendapat label kategori asli.
+
+    Parameters
+    ----------
+    dataname : str
+        Nama dataset (dipakai untuk membuka Info/{dataname}.json).
+    pred_X : np.ndarray, shape (N, total_emb_dim)
+        Hasil rekonstruksi embedding (SUDAH didenormalisasi ke skala
+        embedding asli) — sama seperti `X_recon`/`pred_X` yang dipakai
+        sebagai input `get_eval` di main_mrmd.py.
+    mask : np.ndarray boolean/0-1, shape (N, len(num_col_idx)+len(cat_col_idx))
+        Mask ASLI per-kolom (bukan versi extended/embedding) — sama
+        persis dengan argumen `mask` pada get_eval (ori_train_mask /
+        ori_test_mask).
+    split_df_path : str
+        Path ke csv asli (mis. 'datasets/{dataname}/validation/train.csv'
+        atau 'datasets/{dataname}/validation/val.csv') yang jadi acuan
+        struktur kolom & nilai observed.
+    save_path : str
+        Path tujuan penyimpanan file csv hasil imputasi.
+    emb_model, emb_sizes, bin_midpoints, n_num_cols, num_mean, num_std,
+    cat_encoders, device : lihat load_dataset() — dikembalikan langsung
+        dari load_dataset dan diteruskan apa adanya ke sini.
+    oos : bool
+        Sama seperti pada get_eval, dipakai untuk menangani kasus khusus
+        dataset 'news' (ada 1 baris yang perlu dibuang agar dimensi
+        tetap align dengan data validasi/out-of-sample).
+
+    Return
+    ------
+    result_df : pd.DataFrame
+        DataFrame hasil gabungan (observed asli + missing hasil imputasi)
+        yang juga sudah disimpan ke `save_path`.
+    """
+
+    info_path = f'datasets/Info/{dataname}.json'
+    with open(info_path, 'r') as f:
+        info = json.load(f)
+
+    num_col_idx = info['num_col_idx']
+    cat_col_idx = info['cat_col_idx']
+
+    orig_df = pd.read_csv(split_df_path)
+    cols = orig_df.columns
+
+    mask = np.asarray(mask).astype(bool)
+    num_mask = mask[:, num_col_idx] if len(num_col_idx) > 0 else None
+    cat_mask = mask[:, cat_col_idx] if len(cat_col_idx) > 0 else None
+
+    pred_X_emb = np.array(pred_X, copy=True)
+
+    result_df = orig_df.copy()
+
+    # Special-case sama seperti get_eval: buang 1 baris di news oos agar
+    # dimensi align.
+    if dataname == 'news' and oos is True:
+        drop = 6265
+        if drop < len(result_df):
+            result_df = result_df.drop(index=drop).reset_index(drop=True)
+        if num_mask is not None:
+            num_mask = np.delete(num_mask, drop, axis=0)
+        if cat_mask is not None:
+            cat_mask = np.delete(cat_mask, drop, axis=0)
+        pred_X_emb = np.delete(pred_X_emb, drop, axis=0)
+
+    # ===== Kolom numerik: observed = asli, missing = hasil decode imputasi =====
+    if len(num_col_idx) > 0:
+        num_pred_orig = _decode_and_denormalize_numeric(
+            pred_X_emb, emb_model, bin_midpoints, n_num_cols,
+            num_mean, num_std, device
+        )  # [N, n_num_cols], skala asli
+
+        num_cols = cols[num_col_idx]
+        for i, col in enumerate(num_cols):
+            col_values = result_df[col].values.astype(np.float32).copy()
+            miss_rows = num_mask[:, i]
+            col_values[miss_rows] = num_pred_orig[miss_rows, i]
+            result_df[col] = col_values
+
+    # ===== Kolom kategorik: observed = asli, missing = hasil decode imputasi ===
+    if len(cat_col_idx) > 0 and emb_model is not None:
+        cat_cols = cols[cat_col_idx]
+
+        pred_all_idx = decode_cat_from_embedding(
+            emb_model, pred_X_emb, device
+        )  # [N, n_num_cols + n_cat_cols]
+
+        for j, col in enumerate(cat_cols):
+            miss_rows = cat_mask[:, j]
+            if miss_rows.sum() == 0:
+                continue
+
+            col_offset = n_num_cols + j
+            pred_idx_col = pred_all_idx[:, col_offset]
+
+            le = cat_encoders[col]
+            nclass = len(le.classes_)
+            pred_idx_col = np.clip(pred_idx_col, 0, nclass - 1)
+            decoded_col = le.inverse_transform(pred_idx_col)
+
+            col_values = result_df[col].astype(object).values.copy()
+            col_values[miss_rows] = decoded_col[miss_rows]
+            result_df[col] = col_values
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    result_df.to_csv(save_path, index=False)
+    print(f'[INFO] Hasil imputasi disimpan ke: {save_path}')
+
+    return result_df
+
+
+def round_numeric_for_csv(result_df, dataname, split_df_path, num_col_idx=None,
+                          decimals=4, save_path=None):
+    """
+    Membulatkan kolom numerik pada hasil imputasi (`result_df`, keluaran
+    save_imputed_csv_mrmd) supaya rapi dibaca, dengan deteksi OTOMATIS per
+    kolom. [SAMA PERSIS dengan versi pada dataset.py, generik terhadap
+    pipeline apapun — hanya butuh result_df/dataname/split_df_path]
+
+        - Kalau SEMUA nilai di kolom itu pada file CSV ASLI (train.csv/
+          val.csv) adalah bilangan bulat (mis. jumlah, tahun, kode
+          numerik) -> dibulatkan ke integer.
+        - Kalau tidak (memang mengandung desimal, mis. harga/berat/ukuran)
+          -> dibulatkan ke `decimals` angka di belakang koma.
+
+    Deteksi integer/bukan dilakukan dari file CSV ASLI (bukan dari
+    result_df), karena file CSV asli sudah berisi nilai LENGKAP tanpa NaN.
+
+    Parameters
+    ----------
+    result_df : pd.DataFrame
+        DataFrame hasil dari save_imputed_csv_mrmd.
+    dataname : str
+        Nama dataset, dipakai membaca Info/{dataname}.json kalau
+        num_col_idx tidak diberikan.
+    split_df_path : str
+        Path ke CSV asli (train.csv/val.csv) yang jadi referensi deteksi
+        integer/bukan.
+    num_col_idx : list[int] atau None
+        Index kolom numerik. Kalau None, diambil dari Info/{dataname}.json.
+    decimals : int
+        Jumlah desimal untuk kolom yang TIDAK terdeteksi sebagai integer
+        (default 4).
+    save_path : str atau None
+        Kalau diisi, hasil setelah pembulatan ditulis ulang (overwrite)
+        ke path ini.
+
+    Return
+    ------
+    rounded_df : pd.DataFrame
+        SALINAN result_df dengan kolom numerik sudah dibulatkan
+        (result_df asli tidak diubah).
+    """
+
+    if num_col_idx is None:
+        info_path = f'datasets/Info/{dataname}.json'
+        with open(info_path, 'r') as f:
+            info = json.load(f)
+        num_col_idx = info['num_col_idx']
+
+    orig_df = pd.read_csv(split_df_path)
+    cols = orig_df.columns
+    num_cols = cols[num_col_idx]
+
+    rounded_df = result_df.copy()
+
+    for col in num_cols:
+        orig_vals = orig_df[col].values.astype(np.float64)
+        # PENTING: pakai selisih absolut MURNI (bukan np.allclose dengan
+        # rtol default), karena rtol ikut menyesuaikan skala nilai - untuk
+        # kolom bernilai besar, rtol default membuat toleransi jadi sangat
+        # longgar sehingga nilai desimal bisa salah terdeteksi sebagai
+        # "bulat".
+        is_int_col = np.max(np.abs(orig_vals - np.round(orig_vals))) < 1e-6
+
+        result_vals = rounded_df[col].values.astype(np.float64)
+
+        if is_int_col:
+            rounded_df[col] = np.round(result_vals).astype(np.int64)
+        else:
+            rounded_df[col] = np.round(result_vals, decimals)
+
+    if save_path is not None:
+        rounded_df.to_csv(save_path, index=False)
+        print(f'[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: {save_path}')
+
+    return rounded_df
