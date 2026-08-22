@@ -274,8 +274,8 @@ def main():
     parser.add_argument('--split_idx', type=int, default=0)
     parser.add_argument('--ratio',     type=str, default='30')
     parser.add_argument('--mask',      type=str, default='MCAR')
-    parser.add_argument('--n_epochs',  type=int, default=300)
-    parser.add_argument('--patience',  type=int, default=10)
+    parser.add_argument('--n_epochs',  type=int, default=1000)
+    parser.add_argument('--patience',  type=int, default=40)
     args = parser.parse_args()
 
     dataname, split_idx, ratio, mask_type = (
