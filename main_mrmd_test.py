@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset_mrmd import (load_dataset, get_eval, mean_std,
+from dataset_mrmd_test import (load_dataset, get_eval, mean_std,
                      decode_cat_from_embedding,
                      # [BARU - untuk CSV export] tidak mengubah import yang sudah ada
                      save_imputed_csv_mrmd, round_numeric_for_csv)
