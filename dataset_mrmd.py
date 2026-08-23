@@ -915,15 +915,39 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
     train_y = train_df[cols[target_col_idx]]
     test_y  = test_df[cols[target_col_idx]]
 
-    label_encoder = LabelEncoder()
-    all_labels    = pd.concat([train_y, test_y]).values.ravel()
-    label_encoder.fit(all_labels.astype(str))
+    # [FIX-LEAKAGE] LabelEncoder untuk label/kelas HANYA di-fit pada TRAIN.
+    # Sebelumnya di-fit pada gabungan train+test (all_labels), yang berarti
+    # proses fit "melihat" label test set — ini kebocoran informasi.
+    train_y_str   = train_y.values.ravel().astype(str)
+    test_y_str    = test_y.values.ravel().astype(str)
 
-    train_labels = label_encoder.transform(train_y.values.ravel().astype(str))
-    test_labels  = label_encoder.transform(test_y.values.ravel().astype(str))
+    label_encoder = LabelEncoder()
+    label_encoder.fit(train_y_str)
     n_classes    = len(label_encoder.classes_)
 
-    print(f'[Dataset] Detected {n_classes} classes for supervised learning')
+    train_labels = label_encoder.transform(train_y_str)
+
+    # [FIX-LEAKAGE] Tangani label pada test/validation yang TIDAK PERNAH
+    # muncul di train (unseen). test_labels di sini HANYA dipakai sebagai
+    # y_val eksternal untuk MRmDDiscretizer (MI & JS-divergence), BUKAN untuk
+    # melatih classifier — sehingga label unseen aman dipetakan sementara ke
+    # kelas pertama (index 0) hanya untuk keperluan perhitungan validasi itu.
+    unseen_label_mask = ~np.isin(test_y_str, label_encoder.classes_)
+    if unseen_label_mask.any():
+        n_unseen = int(unseen_label_mask.sum())
+        unseen_vals = np.unique(test_y_str[unseen_label_mask])
+        print(f'[Dataset][WARNING] {n_unseen} label pada test/validation tidak '
+              f'dikenal saat fit LabelEncoder (train): {unseen_vals.tolist()}. '
+              f'Label tsb dipetakan sementara ke kelas pertama HANYA untuk '
+              f'validasi eksternal MRmD (tidak memengaruhi training classifier).')
+        test_y_str_safe = test_y_str.copy()
+        test_y_str_safe[unseen_label_mask] = label_encoder.classes_[0]
+    else:
+        test_y_str_safe = test_y_str
+
+    test_labels  = label_encoder.transform(test_y_str_safe)
+
+    print(f'[Dataset] Detected {n_classes} classes for supervised learning (fit: train only)')
     print(f'[Dataset] Classes: {label_encoder.classes_}')
 
     # ── Normalisasi numerik (untuk evaluasi MAE/RMSE & bin midpoints) ─────
@@ -1019,21 +1043,53 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
 
     if len(cat_col_idx) > 0:
         cat_columns = cols[cat_col_idx]
-        data_cat    = data_df[cat_columns].astype(str)
         train_cat   = train_df[cat_columns].astype(str)
         test_cat    = test_df[cat_columns].astype(str)
+
+        UNKNOWN_TOKEN = '__unknown__'
 
         encoders = {}
         for col in cat_columns:
             le = LabelEncoder()
-            le.fit(data_cat[col])
+            # [FIX-LEAKAGE] Fit HANYA pada TRAIN, bukan pada data_df (full
+            # dataset) seperti sebelumnya. Fit di full dataset berarti
+            # vocabulary sudah "melihat" kategori yang hanya ada di test.
+            le.fit(train_cat[col])
+
+            train_vals = train_cat[col].values
+            test_vals  = test_cat[col].values
+
+            # Kategori pada test yang TIDAK PERNAH muncul di train (unseen)
+            unseen_mask = ~np.isin(test_vals, le.classes_)
+
+            if unseen_mask.any():
+                n_unseen    = int(unseen_mask.sum())
+                unseen_vals = np.unique(test_vals[unseen_mask])
+                print(f"[Dataset][WARNING] Kolom '{col}': {n_unseen} nilai pada "
+                      f"test/validation tidak dikenal saat fit (train): "
+                      f"{unseen_vals.tolist()}. Menambahkan 1 token khusus "
+                      f"'{UNKNOWN_TOKEN}' ke vocabulary kolom ini untuk "
+                      f"menampung kategori baru tsb.")
+                # [FIX-LEAKAGE] Tambahkan 1 kategori khusus 'unknown' di akhir
+                # vocabulary (bukan memaksa kategori baru cocok ke kategori
+                # train yang salah / meng-crash saat transform).
+                le.classes_ = np.append(le.classes_, UNKNOWN_TOKEN)
+
             encoders[col] = le
             cat_dims_cat.append(len(le.classes_))
+
             train_cat_idx_list.append(
-                le.transform(train_cat[col]).astype(np.int64)
+                le.transform(train_vals).astype(np.int64)
             )
+
+            if unseen_mask.any():
+                test_vals_safe = test_vals.copy()
+                test_vals_safe[unseen_mask] = UNKNOWN_TOKEN
+            else:
+                test_vals_safe = test_vals
+
             test_cat_idx_list.append(
-                le.transform(test_cat[col]).astype(np.int64)
+                le.transform(test_vals_safe).astype(np.int64)
             )
 
         train_cat_idx = np.stack(train_cat_idx_list, axis=1)
