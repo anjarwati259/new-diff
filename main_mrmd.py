@@ -13,7 +13,7 @@ from model import MLPDiffusion, Model
 from dataset_mrmd import (load_dataset, get_eval, mean_std,
                      decode_cat_from_embedding,
                      # [BARU - untuk CSV export] tidak mengubah import yang sudah ada
-                     save_imputed_csv_mrmd, select_best_iteration, round_numeric_for_csv)
+                     save_imputed_csv_mrmd, round_numeric_for_csv)
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -23,14 +23,14 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname',   type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu',        type=int, default=0,            help='GPU index.')
 parser.add_argument('--split_idx',  type=int, default=0,            help='Split idx.')
-parser.add_argument('--max_iter',   type=int, default=2,            help='Maximum iteration.')
+parser.add_argument('--max_iter',   type=int, default=5,            help='Maximum iteration.')
 parser.add_argument('--ratio',      type=str, default=30,           help='Masking ratio.')
 parser.add_argument('--hid_dim',    type=int, default=1024,         help='Hidden dimension.')
 parser.add_argument('--mask',       type=str, default='MCAR',       help='Masking mechanism.')
-parser.add_argument('--num_trials', type=int, default=2,            help='Number of sampling times.')
+parser.add_argument('--num_trials', type=int, default=10,            help='Number of sampling times.')
 parser.add_argument('--num_steps',  type=int, default=50,           help='Number of diffusion steps.')
 parser.add_argument('--noise_std',  type=float, default=0.00,       help='Noise std for embedding model.')
-parser.add_argument('--epochs',     type=int, default=100,        help='Number of training epochs per iteration.')
+parser.add_argument('--epochs',     type=int, default=10000,        help='Number of training epochs per iteration.')
 parser.add_argument('--resume_iter',type=int, default=0,            help='Resume from this iteration index.')
 parser.add_argument('--stop_iter',  type=int, default=None,         help='Stop after this iteration (exclusive). Jika None, jalan sampai max_iter.')
 parser.add_argument('--save_csv', type=str, default='True', choices=['True', 'False'],
@@ -510,23 +510,33 @@ if __name__ == '__main__':
                   'TIDAK disimpan. Jalankan ulang dengan --resume_iter 0 (satu run '
                   'penuh sampai max_iter) untuk mengaktifkan penyimpanan CSV.')
         else:
-            best_iter = select_best_iteration(MAEs_out, RMSEs_out, ACCs_out)
+            # [FIX-LEAKAGE] Sebelumnya memilih iterasi berdasarkan
+            # MAEs_out/RMSEs_out/ACCs_out (metrik out-of-sample/test) via
+            # select_best_iteration(). Ini adalah model/checkpoint selection
+            # yang "mengintip" hasil test set untuk memutuskan iterasi mana
+            # yang disimpan -> berpotensi leakage kalau angka out-of-sample
+            # dari iterasi terpilih ikut dipakai sbg klaim performa.
+            #
+            # Sekarang: SELALU PAKAI ITERASI TERAKHIR (fixed, tidak
+            # bergantung pada metrik test sama sekali). Fungsi
+            # select_best_iteration() sudah tidak dipakai/di-import lagi.
+            last_iter = args.max_iter - 1
 
-            print(f'\n[TERPILIH - untuk CSV] Iterasi : {best_iter}')
-            print(f'[TERPILIH] MAE  : {MAEs_out[best_iter]}')
-            print(f'[TERPILIH] RMSE : {RMSEs_out[best_iter]}')
-            print(f'[TERPILIH] ACC  : {ACCs_out[best_iter]}')
+            print(f'\n[CSV - iterasi terakhir] Iterasi : {last_iter}')
+            print(f'[INFO] MAE_out(iter {last_iter})  : {MAEs_out[last_iter]}')
+            print(f'[INFO] RMSE_out(iter {last_iter}) : {RMSEs_out[last_iter]}')
+            print(f'[INFO] ACC_out(iter {last_iter})  : {ACCs_out[last_iter]}')
 
             imputed_csv_dir = f'{result_save_path}/imputed_csv'
             os.makedirs(imputed_csv_dir, exist_ok=True)
 
             # ---- VAL (out-of-sample; file aslinya 'validation/val.csv') ----
-            best_pred_X_val = np.load(f'{ckpt_dir}/oos_pred_{best_iter}.npy')
+            last_pred_X_val = np.load(f'{ckpt_dir}/oos_pred_{last_iter}.npy')
 
-            val_csv_path = f'{imputed_csv_dir}/val_impute_iter{best_iter}.csv'
+            val_csv_path = f'{imputed_csv_dir}/val_impute_iter{last_iter}.csv'
             val_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
-                pred_X        = best_pred_X_val,
+                pred_X        = last_pred_X_val,
                 mask          = ori_test_mask,
                 split_df_path = f'datasets/{dataname}/validation/val.csv',
                 save_path     = val_csv_path,
@@ -550,12 +560,12 @@ if __name__ == '__main__':
             )
 
             # ---- TRAIN (in-sample; file aslinya 'validation/train.csv') ----
-            best_pred_X_train = np.load(f'{ckpt_dir}/insample_pred_{best_iter}.npy')
+            last_pred_X_train = np.load(f'{ckpt_dir}/insample_pred_{last_iter}.npy')
 
-            train_csv_path = f'{imputed_csv_dir}/train_impute_iter{best_iter}.csv'
+            train_csv_path = f'{imputed_csv_dir}/train_impute_iter{last_iter}.csv'
             train_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
-                pred_X        = best_pred_X_train,
+                pred_X        = last_pred_X_train,
                 mask          = ori_train_mask,
                 split_df_path = f'datasets/{dataname}/validation/train.csv',
                 save_path     = train_csv_path,
@@ -579,9 +589,9 @@ if __name__ == '__main__':
             )
 
             with open(f'{result_save_path}/result_mrmdwith.txt', 'a+', encoding='utf-8') as f:
-                f.write(f'[CSV] Iterasi terpilih (untuk CSV): {best_iter}, '
-                        f'MAE={MAEs_out[best_iter]}, RMSE={RMSEs_out[best_iter]}, '
-                        f'ACC={ACCs_out[best_iter]}\n')
+                f.write(f'[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): '
+                        f'{last_iter}, MAE_out={MAEs_out[last_iter]}, '
+                        f'RMSE_out={RMSEs_out[last_iter]}, ACC_out={ACCs_out[last_iter]}\n')
                 f.write(f'[CSV] Hasil imputasi TRAIN disimpan di: {train_csv_path}\n')
                 f.write(f'[CSV] Hasil imputasi VAL   disimpan di: {val_csv_path}\n\n')
 
