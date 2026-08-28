@@ -100,7 +100,6 @@ if __name__ == '__main__':
     print(f'  - Embedding Training  : {t_emb:.4f}s')
     print(f'  - Total (Diskrit→Emb) : {t_total_preprocessing:.4f}s')
     print(f'{"="*60}')
-    exit()
 
     # Setelah load_dataset selesai, aktifkan default device ke CUDA.
     torch.set_default_device(device)
