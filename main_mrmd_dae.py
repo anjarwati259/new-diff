@@ -534,7 +534,7 @@ if __name__ == '__main__':
             # ---- TEST (out-of-sample; file aslinya 'test.csv') ----
             last_pred_X_val = np.load(f'{ckpt_dir}/oos_pred_{last_iter}.npy')
 
-            test_csv_path = f'{imputed_csv_dir}/test_impute_mrmd{last_iter}.csv'
+            test_csv_path = f'{imputed_csv_dir}/test_impute_mrmd_dae{last_iter}.csv'
             val_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
                 pred_X        = last_pred_X_val,
@@ -563,7 +563,7 @@ if __name__ == '__main__':
             # ---- TRAIN (in-sample; file aslinya 'train.csv') ----
             last_pred_X_train = np.load(f'{ckpt_dir}/insample_pred_{last_iter}.npy')
 
-            train_csv_path = f'{imputed_csv_dir}/train_impute_mrmd{last_iter}.csv'
+            train_csv_path = f'{imputed_csv_dir}/train_impute_mrmd_dae{last_iter}.csv'
             train_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
                 pred_X        = last_pred_X_train,
@@ -589,7 +589,7 @@ if __name__ == '__main__':
                 save_path     = train_csv_path,
             )
 
-            with open(f'{result_save_path}/result_mrmdwith.txt', 'a+', encoding='utf-8') as f:
+            with open(f'{result_save_path}/result_mrmdwith_dae.txt', 'a+', encoding='utf-8') as f:
                 f.write(f'[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): '
                         f'{last_iter}, MAE_out={MAEs_out[last_iter]}, '
                         f'RMSE_out={RMSEs_out[last_iter]}, ACC_out={ACCs_out[last_iter]}\n')
