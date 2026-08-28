@@ -10,7 +10,7 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset_mrmd_test_ptvae import (load_dataset, get_eval, mean_std,
+from dataset_mrmd_ptvae import (load_dataset, get_eval, mean_std,
                      decode_cat_from_embedding,
                      # [BARU - untuk CSV export] tidak mengubah import yang sudah ada
                      save_imputed_csv_mrmd, round_numeric_for_csv)
@@ -438,7 +438,7 @@ if __name__ == '__main__':
         print(f'  - Out-of-sample Imputation     : {t_impute_out:.4f}s')
         print(f'  - TOTAL (Diskrit→Imputasi)     : {t_total_pipeline:.4f}s')
 
-        with open(f'{result_save_path}/result_mrmdwith.txt', 'a+', encoding='utf-8') as f:
+        with open(f'{result_save_path}/result_mrmdwith_ptvae.txt', 'a+', encoding='utf-8') as f:
             f.write(
                 f'iteration {iteration}, '
                 f'MAE: in-sample={mae:.6f}, out-of-sample={mae_out:.6f}\n'
@@ -533,7 +533,7 @@ if __name__ == '__main__':
             # ---- TEST (out-of-sample; file aslinya 'test.csv') ----
             last_pred_X_val = np.load(f'{ckpt_dir}/oos_pred_{last_iter}.npy')
 
-            test_csv_path = f'{imputed_csv_dir}/test_impute_mrmd{last_iter}.csv'
+            test_csv_path = f'{imputed_csv_dir}/test_impute_mrmd_ptvae{last_iter}.csv'
             val_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
                 pred_X        = last_pred_X_val,
@@ -562,7 +562,7 @@ if __name__ == '__main__':
             # ---- TRAIN (in-sample; file aslinya 'train.csv') ----
             last_pred_X_train = np.load(f'{ckpt_dir}/insample_pred_{last_iter}.npy')
 
-            train_csv_path = f'{imputed_csv_dir}/train_impute_mrmd{last_iter}.csv'
+            train_csv_path = f'{imputed_csv_dir}/train_impute_mrmd_ptvae{last_iter}.csv'
             train_result_df = save_imputed_csv_mrmd(
                 dataname      = dataname,
                 pred_X        = last_pred_X_train,
@@ -588,7 +588,7 @@ if __name__ == '__main__':
                 save_path     = train_csv_path,
             )
 
-            with open(f'{result_save_path}/result_mrmdwith.txt', 'a+', encoding='utf-8') as f:
+            with open(f'{result_save_path}/result_mrmdwith_ptvae.txt', 'a+', encoding='utf-8') as f:
                 f.write(f'[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): '
                         f'{last_iter}, MAE_out={MAEs_out[last_iter]}, '
                         f'RMSE_out={RMSEs_out[last_iter]}, ACC_out={ACCs_out[last_iter]}\n')
