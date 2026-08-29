@@ -26,12 +26,12 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname',   type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu',        type=int, default=0,            help='GPU index.')
 parser.add_argument('--split_idx',  type=int, default=0,            help='Split idx.')
-parser.add_argument('--max_iter',   type=int, default=6,            help='Maximum iteration.')
+parser.add_argument('--max_iter',   type=int, default=5,            help='Maximum iteration.')
 parser.add_argument('--ratio',      type=str, default=30,           help='Masking ratio.')
 parser.add_argument('--hid_dim',    type=int, default=1024,         help='Hidden dimension.')
 parser.add_argument('--mask',       type=str, default='MCAR',       help='Masking mechanism.')
-parser.add_argument('--num_trials', type=int, default=2,            help='Number of sampling times.')
-parser.add_argument('--num_steps',  type=int, default=20,           help='Number of diffusion steps.')
+parser.add_argument('--num_trials', type=int, default=10,            help='Number of sampling times.')
+parser.add_argument('--num_steps',  type=int, default=50,           help='Number of diffusion steps.')
 
 args = parser.parse_args()
 
@@ -176,7 +176,7 @@ if __name__ == '__main__':
             generator   = generator,
         )
 
-        num_epochs  = 10 + 1
+        num_epochs  = 10000 + 1
         denoise_fn  = MLPDiffusion(in_dim, hid_dim).to(device)
 
         if iteration == 0:
