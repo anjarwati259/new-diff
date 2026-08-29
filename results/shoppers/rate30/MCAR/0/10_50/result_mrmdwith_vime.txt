@@ -12,3 +12,28 @@ iteration 1, Training time=651.6676s, In-sample imputation=492.8032s, Out-of-sam
 iteration 1, MRmD discretization=0.0000s, Embedding training=53.5273s, Total preprocessing (Diskrit+Emb)=53.5273s
 iteration 1, TOTAL pipeline (Diskrit-Imputasi)=1426.1180s
 
+iteration 2, MAE: in-sample=0.461142, out-of-sample=0.455511
+iteration 2, RMSE: in-sample=1.095826, out-of-sample=1.045994
+iteration 2, ACC: in-sample=0.4614753650133975, out-of-sample=0.46526261718248363
+iteration 2, Training time=874.6795s, In-sample imputation=489.5986s, Out-of-sample imputation=216.8602s
+iteration 2, MRmD discretization=0.0000s, Embedding training=53.5273s, Total preprocessing (Diskrit+Emb)=53.5273s
+iteration 2, TOTAL pipeline (Diskrit-Imputasi)=1634.6656s
+
+iteration 3, MAE: in-sample=0.461142, out-of-sample=0.455511
+iteration 3, RMSE: in-sample=1.095826, out-of-sample=1.045994
+iteration 3, ACC: in-sample=0.4614753650133975, out-of-sample=0.46526261718248363
+iteration 3, Training time=569.6024s, In-sample imputation=481.0016s, Out-of-sample imputation=216.5341s
+iteration 3, MRmD discretization=0.0000s, Embedding training=53.5273s, Total preprocessing (Diskrit+Emb)=53.5273s
+iteration 3, TOTAL pipeline (Diskrit-Imputasi)=1320.6654s
+
+iteration 4, MAE: in-sample=0.461142, out-of-sample=0.455511
+iteration 4, RMSE: in-sample=1.095826, out-of-sample=1.045994
+iteration 4, ACC: in-sample=0.4614753650133975, out-of-sample=0.46526261718248363
+iteration 4, Training time=553.8013s, In-sample imputation=479.7463s, Out-of-sample imputation=214.7033s
+iteration 4, MRmD discretization=0.0000s, Embedding training=53.5273s, Total preprocessing (Diskrit+Emb)=53.5273s
+iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1301.7782s
+
+[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): 4, MAE_out=0.45551058650016785, RMSE_out=1.0459935665130615, ACC_out=0.46526261718248363
+[CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MCAR/0/10_50/imputed_csv/train_impute_mrmd4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MCAR/0/10_50/imputed_csv/test_impute_mrmd_vime4.csv
+
