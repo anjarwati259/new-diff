@@ -1,0 +1,4 @@
+[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): 4, MAE_out=0.4801158607006073, RMSE_out=0.9816699028015137, ACC_out=0.5132947976878612
+[CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MCAR/2/10_50/imputed_csv/train_impute_mrmd_dae4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MCAR/2/10_50/imputed_csv/test_impute_mrmd_dae4.csv
+
