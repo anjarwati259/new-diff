@@ -1,0 +1,22 @@
+Iteration: 4
+Checkpoint dir: ckpt/shoppers/rate30/MNAR_logistic_T2/9/10_50
+Loading X_miss from ckpt/shoppers/rate30/MNAR_logistic_T2/9/10_50/iter_4.npy
+[INFO] X_miss shape: torch.Size([8631, 76]), range: [-8.6683, 5.0257]
+Training:  30%|████▋           | 2966/10001 [07:09<16:22,  7.16it/s, loss=0.148]Early stopping
+Training:  30%|████▋           | 2966/10001 [07:09<16:59,  6.90it/s, loss=0.148]
+Training time: 429.9139s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:29<00:00, 45.00s/it]
+In-sample imputation time: 450.16s
+In-sample  → MAE=0.613629  RMSE=1.157376  ACC=0.5371533374089924
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:24<00:00, 20.41s/it]
+Out-of-sample imputation time: 204.18s
+Out-of-sample → MAE=0.602664  RMSE=1.044087  ACC=0.5359243160317054
+
+[TIMING] Iteration 4 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 165.7138s
+  - Diffusion Training           : 429.9139s
+  - In-sample Imputation         : 450.1640s
+  - Out-of-sample Imputation     : 204.1757s
+  - TOTAL (Diskrit→Imputasi)     : 1249.9674s
+Results saved to results/shoppers/rate30/MNAR_logistic_T2/9/10_50
