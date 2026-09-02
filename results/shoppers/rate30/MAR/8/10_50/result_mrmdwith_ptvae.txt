@@ -1,0 +1,23 @@
+============================================================
+Iteration: 4
+Checkpoint dir: ckpt/shoppers/rate30/MAR/8/10_50
+Loading X_miss from ckpt/shoppers/rate30/MAR/8/10_50/iter_4.npy
+[INFO] X_miss shape: torch.Size([8631, 77]), range: [-8.2055, 8.0529]
+Training:  33%|█████▎          | 3294/10001 [07:55<15:33,  7.18it/s, loss=0.224]Early stopping
+Training:  33%|█████▎          | 3294/10001 [07:55<16:09,  6.92it/s, loss=0.224]
+Training time: 475.9319s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:27<00:00, 44.76s/it]
+In-sample imputation time: 447.84s
+In-sample  → MAE=0.685967  RMSE=1.251979  ACC=0.5036873819588092
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:21<00:00, 20.14s/it]
+Out-of-sample imputation time: 201.46s
+Out-of-sample → MAE=0.606835  RMSE=1.001443  ACC=0.4926914521766762
+
+[TIMING] Iteration 4 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 209.5528s
+  - Diffusion Training           : 475.9319s
+  - In-sample Imputation         : 447.8401s
+  - Out-of-sample Imputation     : 201.4597s
+  - TOTAL (Diskrit→Imputasi)     : 1334.7845s
+Results saved to results/shoppers/rate30/MAR/8/10_50

@@ -37,3 +37,130 @@ iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1410.3528s
 [CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MAR/6/10_50/imputed_csv/train_impute_mrmd4.csv
 [CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MAR/6/10_50/imputed_csv/test_impute_mrmd4.csv
 
+In-sample imputation: 100%|█████████████████████| 10/10 [07:29<00:00, 44.95s/it]
+In-sample imputation time: 449.67s
+In-sample  → MAE=0.591608  RMSE=1.523710  ACC=0.6239367177764534
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:20<00:00, 20.08s/it]
+Out-of-sample imputation time: 200.90s
+Out-of-sample → MAE=0.381438  RMSE=0.939137  ACC=0.6742364917776038
+
+[TIMING] Iteration 0 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 94.3626s
+  - Diffusion Training           : 880.5602s
+  - In-sample Imputation         : 449.6745s
+  - Out-of-sample Imputation     : 200.8976s
+  - TOTAL (Diskrit→Imputasi)     : 1625.4949s
+Results saved to results/shoppers/rate30/MAR/6/10_50
+
+============================================================
+Iteration: 1
+Checkpoint dir: ckpt/shoppers/rate30/MAR/6/10_50
+Loading X_miss from ckpt/shoppers/rate30/MAR/6/10_50/iter_1.npy
+[INFO] X_miss shape: torch.Size([8631, 77]), range: [-2.5307, 2.4855]
+Training:  65%|██████████▍     | 6541/10001 [15:18<07:38,  7.54it/s, loss=0.425]Early stopping
+Training:  65%|██████████▍     | 6541/10001 [15:18<08:05,  7.12it/s, loss=0.425]
+Training time: 918.2029s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:29<00:00, 44.93s/it]
+In-sample imputation time: 449.55s
+In-sample  → MAE=0.564895  RMSE=1.498119  ACC=0.6673890664788427
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:20<00:00, 20.09s/it]
+Out-of-sample imputation time: 200.95s
+Out-of-sample → MAE=0.366261  RMSE=0.915686  ACC=0.7094753328112764
+
+[TIMING] Iteration 1 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 94.3626s
+  - Diffusion Training           : 918.2029s
+  - In-sample Imputation         : 449.5517s
+  - Out-of-sample Imputation     : 200.9496s
+  - TOTAL (Diskrit→Imputasi)     : 1663.0668s
+Results saved to results/shoppers/rate30/MAR/6/10_50
+
+============================================================
+Iteration: 2
+Checkpoint dir: ckpt/shoppers/rate30/MAR/6/10_50
+Loading X_miss from ckpt/shoppers/rate30/MAR/6/10_50/iter_2.npy
+[INFO] X_miss shape: torch.Size([8631, 77]), range: [-2.7153, 2.4855]
+Training:  67%|██████████▋     | 6705/10001 [15:41<07:17,  7.53it/s, loss=0.433]Early stopping
+Training:  67%|██████████▋     | 6705/10001 [15:41<07:42,  7.12it/s, loss=0.433]
+Training time: 941.6360s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:28<00:00, 44.90s/it]
+In-sample imputation time: 449.11s
+In-sample  → MAE=0.555469  RMSE=1.489003  ACC=0.6865687814921169
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:20<00:00, 20.09s/it]
+Out-of-sample imputation time: 201.02s
+Out-of-sample → MAE=0.358276  RMSE=0.906055  ACC=0.7146436961628817
+
+[TIMING] Iteration 2 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 94.3626s
+  - Diffusion Training           : 941.6360s
+  - In-sample Imputation         : 449.1076s
+  - Out-of-sample Imputation     : 201.0249s
+  - TOTAL (Diskrit→Imputasi)     : 1686.1311s
+Results saved to results/shoppers/rate30/MAR/6/10_50
+
+============================================================
+Iteration: 3
+Checkpoint dir: ckpt/shoppers/rate30/MAR/6/10_50
+Loading X_miss from ckpt/shoppers/rate30/MAR/6/10_50/iter_3.npy
+[INFO] X_miss shape: torch.Size([8631, 77]), range: [-7.0422, 2.4855]
+Training:  62%|█████████▉      | 6232/10001 [14:41<08:20,  7.53it/s, loss=0.437]Early stopping
+Training:  62%|█████████▉      | 6232/10001 [14:41<08:53,  7.07it/s, loss=0.437]
+Training time: 881.5486s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:28<00:00, 44.87s/it]
+In-sample imputation time: 448.82s
+In-sample  → MAE=0.545160  RMSE=1.481392  ACC=0.7028227772660779
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:20<00:00, 20.06s/it]
+Out-of-sample imputation time: 200.77s
+Out-of-sample → MAE=0.355991  RMSE=0.905799  ACC=0.727956147220047
+
+[TIMING] Iteration 3 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 94.3626s
+  - Diffusion Training           : 881.5486s
+  - In-sample Imputation         : 448.8217s
+  - Out-of-sample Imputation     : 200.7693s
+  - TOTAL (Diskrit→Imputasi)     : 1625.5023s
+Results saved to results/shoppers/rate30/MAR/6/10_50
+
+============================================================
+Iteration: 4
+Checkpoint dir: ckpt/shoppers/rate30/MAR/6/10_50
+Loading X_miss from ckpt/shoppers/rate30/MAR/6/10_50/iter_4.npy
+[INFO] X_miss shape: torch.Size([8631, 77]), range: [-6.0527, 2.4855]
+Training:  53%|████████▍       | 5286/10001 [12:27<10:34,  7.43it/s, loss=0.424]Early stopping
+Training:  53%|████████▍       | 5286/10001 [12:27<11:06,  7.07it/s, loss=0.424]
+Training time: 747.2874s
+In-sample imputation: 100%|█████████████████████| 10/10 [07:28<00:00, 44.89s/it]
+In-sample imputation time: 449.02s
+In-sample  → MAE=0.540135  RMSE=1.474920  ACC=0.7133878745191526
+Out-of-sample imputation: 100%|█████████████████| 10/10 [03:20<00:00, 20.07s/it]
+Out-of-sample imputation time: 200.77s
+Out-of-sample → MAE=0.348248  RMSE=0.896623  ACC=0.7404855129209084
+
+[TIMING] Iteration 4 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 94.3626s
+  - Diffusion Training           : 747.2874s
+  - In-sample Imputation         : 449.0183s
+  - Out-of-sample Imputation     : 200.7731s
+  - TOTAL (Diskrit→Imputasi)     : 1491.4414s
+Results saved to results/shoppers/rate30/MAR/6/10_50
+
+============================================================
+[DONE] Semua 5 iterasi selesai.
+============================================================
+
+[CSV - iterasi terakhir] Iterasi : 4
+[INFO] MAE_out(iter 4)  : 0.34824779629707336
+[INFO] RMSE_out(iter 4) : 0.896623432636261
+[INFO] ACC_out(iter 4)  : 0.7404855129209084
+[INFO] Hasil imputasi disimpan ke: results/shoppers/rate30/MAR/6/10_50/imputed_csv/test_impute_mrmd4.csv
+[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: results/shoppers/rate30/MAR/6/10_50/imputed_csv/test_impute_mrmd4.csv
+[INFO] Hasil imputasi disimpan ke: results/shoppers/rate30/MAR/6/10_50/imputed_csv/train_impute_mrmd4.csv
+[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: results/shoppers/rate30/MAR/6/10_50/imputed_csv/train_impute_mrmd4.csv
+
+[CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MAR/6/10_50/imputed_csv/train_impute_mrmd4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MAR/6/10_50/imputed_csv/test_impute_mrmd4.csv
