@@ -27,7 +27,7 @@ parser.add_argument('--hid_dim',    type=int, default=1024,         help='Hidden
 parser.add_argument('--mask',       type=str, default='MCAR',       help='Masking mechanism.')
 parser.add_argument('--num_trials', type=int, default=10,            help='Number of sampling times.')
 parser.add_argument('--num_steps',  type=int, default=50,           help='Number of diffusion steps.')
-parser.add_argument('--noise_std',  type=float, default=0.0,       help='Noise std for embedding model.')
+parser.add_argument('--noise_std',  type=float, default=0.00,       help='Noise std for embedding model.')
 parser.add_argument('--epochs',     type=int, default=10000,        help='Number of training epochs per iteration.')
 parser.add_argument('--resume_iter',type=int, default=0,            help='Resume from this iteration index.')
 parser.add_argument('--stop_iter',  type=int, default=None,         help='Stop after this iteration (exclusive). Jika None, jalan sampai max_iter.')
