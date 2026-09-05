@@ -10,10 +10,8 @@ import time
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
-from dataset_mrmd_test import (load_dataset, get_eval, mean_std,
-                     decode_cat_from_embedding,
-                     # [BARU - untuk CSV export] tidak mengubah import yang sudah ada
-                     save_imputed_csv_mrmd, round_numeric_for_csv)
+from dataset_mdlpwith import (load_dataset, get_eval, mean_std,
+                     decode_cat_from_embedding)
 from diffusion_utils import sample_step, impute_mask
 
 warnings.filterwarnings('ignore')
@@ -23,21 +21,18 @@ parser = argparse.ArgumentParser(description='Missing Value Imputation')
 parser.add_argument('--dataname',   type=str, default='california', help='Name of dataset.')
 parser.add_argument('--gpu',        type=int, default=0,            help='GPU index.')
 parser.add_argument('--split_idx',  type=int, default=0,            help='Split idx.')
-parser.add_argument('--max_iter',   type=int, default=5,            help='Maximum iteration.')
+parser.add_argument('--max_iter',   type=int, default=10,            help='Maximum iteration.')
 parser.add_argument('--ratio',      type=str, default=30,           help='Masking ratio.')
 parser.add_argument('--hid_dim',    type=int, default=1024,         help='Hidden dimension.')
 parser.add_argument('--mask',       type=str, default='MCAR',       help='Masking mechanism.')
-parser.add_argument('--num_trials', type=int, default=10,            help='Number of sampling times.')
+parser.add_argument('--num_trials', type=int, default=20,            help='Number of sampling times.')
 parser.add_argument('--num_steps',  type=int, default=50,           help='Number of diffusion steps.')
-parser.add_argument('--noise_std',  type=float, default=0.00,       help='Noise std for embedding model.')
+parser.add_argument('--noise_std',  type=float, default=0.05,       help='Noise std for embedding model.')
 parser.add_argument('--epochs',     type=int, default=10000,        help='Number of training epochs per iteration.')
 parser.add_argument('--resume_iter',type=int, default=0,            help='Resume from this iteration index.')
 parser.add_argument('--stop_iter',  type=int, default=None,         help='Stop after this iteration (exclusive). Jika None, jalan sampai max_iter.')
-parser.add_argument('--save_csv', type=str, default='False', choices=['True', 'False'],
-                     help='True: simpan hasil imputasi (iterasi terbaik out-of-sample) ke CSV. False: tidak disimpan.')
 
 args = parser.parse_args()
-args.save_csv = (args.save_csv == 'True')
 
 # Force GPU usage
 if not torch.cuda.is_available():
@@ -66,7 +61,7 @@ if __name__ == '__main__':
     #  PENTING: load_dataset dipanggil SEBELUM torch.set_default_device.
     #
     #  [MODIFIKASI] load_dataset sekarang mengembalikan 3 nilai tambahan:
-    #    - mrmd          : MRmDDiscretizer (untuk decode numerik)
+    #    - mdlp          : MDLPDiscretizer (untuk decode numerik)
     #    - bin_midpoints : list[n_num_cols] — midpoint bin skala normalisasi
     #    - n_num_cols    : int — jumlah kolom numerik
     #
@@ -82,21 +77,17 @@ if __name__ == '__main__':
      cat_bin_num,
      emb_model,
      emb_sizes,
-     mrmd,           # [BARU] MRmDDiscretizer (atau None jika tidak ada numerik)
+     mdlp,           # [BARU] MDLPDiscretizer (atau None jika tidak ada numerik)
      bin_midpoints,  # [BARU] list[n_num_cols] midpoint per bin, skala normalisasi
      n_num_cols,     # [BARU] jumlah kolom numerik
-     t_mrmd,         # [BARU] waktu komputasi MRmD discretization (detik)
-     t_emb,          # [BARU] waktu komputasi embedding training (detik)
-     # [BARU - untuk CSV export] tidak mengubah/menyentuh nilai-nilai di atas
-     num_mean,       # mean numerik skala asli per kolom, atau None
-     num_std,        # std  numerik skala asli per kolom, atau None
-     cat_encoders    # dict {nama_kolom: LabelEncoder} kategorikal, atau {}
+     t_mdlp,         # [BARU] waktu komputasi MDLP discretization (detik)
+     t_emb           # [BARU] waktu komputasi embedding training (detik)
      ) = load_dataset(dataname, split_idx, mask_type, ratio, args.noise_std)
 
-    t_total_preprocessing = t_mrmd + t_emb
+    t_total_preprocessing = t_mdlp + t_emb
     print(f'\n{"="*60}')
     print(f'[TIMING] Ringkasan Waktu Komputasi Preprocessing:')
-    print(f'  - MRmD Discretization : {t_mrmd:.4f}s')
+    print(f'  - MDLP Discretization : {t_mdlp:.4f}s')
     print(f'  - Embedding Training  : {t_emb:.4f}s')
     print(f'  - Total (Diskrit→Emb) : {t_total_preprocessing:.4f}s')
     print(f'{"="*60}')
@@ -337,11 +328,6 @@ if __name__ == '__main__':
         RMSEs.append(rmse)
         ACCs.append(acc)
 
-        # [BARU - untuk CSV export] Simpan pred_X in-sample (embedding, skala
-        # asli) tiap iterasi, dipakai nanti untuk membuat CSV hasil imputasi
-        # train dari iterasi terpilih. Tidak mengubah alur training/evaluasi.
-        np.save(f'{ckpt_dir}/insample_pred_{iteration}.npy', pred_X)
-
         impute_end_time = time.time()
         print(f'In-sample imputation time: '
               f'{impute_end_time - impute_start_time:.2f}s')
@@ -408,12 +394,6 @@ if __name__ == '__main__':
         RMSEs_out.append(rmse_out)
         ACCs_out.append(acc_out)
 
-        # [BARU - untuk CSV export] Simpan pred_X out-of-sample (embedding,
-        # skala asli) tiap iterasi, dipakai nanti untuk membuat CSV hasil
-        # imputasi val dari iterasi terpilih. Tidak mengubah alur
-        # training/evaluasi.
-        np.save(f'{ckpt_dir}/oos_pred_{iteration}.npy', pred_X)
-
         oos_end = time.time()
         print(f'Out-of-sample imputation time: {oos_end - oos_start:.2f}s')
         print(f'Out-of-sample → MAE={mae_out:.6f}  RMSE={rmse_out:.6f}  ACC={acc_out}')
@@ -428,10 +408,10 @@ if __name__ == '__main__':
         t_train          = end_time - start_time
         t_impute_in      = impute_end_time - impute_start_time
         t_impute_out     = oos_end - oos_start
-        t_total_pipeline = t_mrmd + t_emb + t_train + t_impute_in + t_impute_out
+        t_total_pipeline = t_mdlp + t_emb + t_train + t_impute_in + t_impute_out
 
         print(f'\n[TIMING] Iteration {iteration} — Ringkasan Waktu:')
-        print(f'  - MRmD Discretization         : {t_mrmd:.4f}s')
+        print(f'  - MDLP Discretization         : {t_mdlp:.4f}s')
         print(f'  - Embedding Training           : {t_emb:.4f}s')
         print(f'  - Diffusion Training           : {t_train:.4f}s')
         print(f'  - In-sample Imputation         : {t_impute_in:.4f}s')
@@ -459,9 +439,9 @@ if __name__ == '__main__':
             )
             f.write(
                 f'iteration {iteration}, '
-                f'MRmD discretization={t_mrmd:.4f}s, '
+                f'MDLP discretization={t_mdlp:.4f}s, '
                 f'Embedding training={t_emb:.4f}s, '
-                f'Total preprocessing (Diskrit+Emb)={t_mrmd + t_emb:.4f}s\n'
+                f'Total preprocessing (Diskrit+Emb)={t_mdlp + t_emb:.4f}s\n'
             )
             f.write(
                 f'iteration {iteration}, '
@@ -487,113 +467,3 @@ if __name__ == '__main__':
         print(f'\n{"="*60}')
         print(f'[DONE] Semua {args.max_iter} iterasi selesai.')
         print(f'{"="*60}')
-
-        # =====================================================================
-        #  [BARU] Simpan hasil imputasi (iterasi TERBAIK) ke CSV.
-        #
-        #  Proses ini TERPISAH, dijalankan HANYA setelah semua iterasi
-        #  (0..max_iter-1) selesai dalam SATU run penuh (resume_iter harus 0),
-        #  supaya riwayat metrik out-of-sample (MAEs_out/RMSEs_out/ACCs_out)
-        #  lengkap untuk seluruh iterasi sebelum memilih iterasi terbaik.
-        #  TIDAK menyentuh/mengubah training, metrik, ataupun isi file
-        #  iter_{i}.npy yang sudah ada. Bisa dimatikan lewat --save_csv False.
-        # =====================================================================
-        if not args.save_csv:
-            print('\n[INFO] --save_csv False -> hasil imputasi (train & val) '
-                  'TIDAK disimpan ke CSV.')
-            with open(f'{result_save_path}/result_mrmdwith.txt', 'a+', encoding='utf-8') as f:
-                f.write('[CSV] --save_csv False -> hasil imputasi (train & val) '
-                        'TIDAK disimpan ke CSV.\n\n')
-        elif args.resume_iter != 0:
-            print('\n[INFO] resume_iter != 0 -> riwayat metrik out-of-sample tidak '
-                  'lengkap untuk seluruh iterasi pada run ini, CSV hasil imputasi '
-                  'TIDAK disimpan. Jalankan ulang dengan --resume_iter 0 (satu run '
-                  'penuh sampai max_iter) untuk mengaktifkan penyimpanan CSV.')
-        else:
-            # [FIX-LEAKAGE] Sebelumnya memilih iterasi berdasarkan
-            # MAEs_out/RMSEs_out/ACCs_out (metrik out-of-sample/test) via
-            # select_best_iteration(). Ini adalah model/checkpoint selection
-            # yang "mengintip" hasil test set untuk memutuskan iterasi mana
-            # yang disimpan -> berpotensi leakage kalau angka out-of-sample
-            # dari iterasi terpilih ikut dipakai sbg klaim performa.
-            #
-            # Sekarang: SELALU PAKAI ITERASI TERAKHIR (fixed, tidak
-            # bergantung pada metrik test sama sekali). Fungsi
-            # select_best_iteration() sudah tidak dipakai/di-import lagi.
-            last_iter = args.max_iter - 1
-
-            print(f'\n[CSV - iterasi terakhir] Iterasi : {last_iter}')
-            print(f'[INFO] MAE_out(iter {last_iter})  : {MAEs_out[last_iter]}')
-            print(f'[INFO] RMSE_out(iter {last_iter}) : {RMSEs_out[last_iter]}')
-            print(f'[INFO] ACC_out(iter {last_iter})  : {ACCs_out[last_iter]}')
-
-            imputed_csv_dir = f'{result_save_path}/imputed_csv'
-            os.makedirs(imputed_csv_dir, exist_ok=True)
-
-            # ---- TEST (out-of-sample; file aslinya 'test.csv') ----
-            last_pred_X_val = np.load(f'{ckpt_dir}/oos_pred_{last_iter}.npy')
-
-            test_csv_path = f'{imputed_csv_dir}/test_impute_mdlp{last_iter}.csv'
-            val_result_df = save_imputed_csv_mrmd(
-                dataname      = dataname,
-                pred_X        = last_pred_X_val,
-                mask          = ori_test_mask,
-                split_df_path = f'datasets/{dataname}/test.csv',
-                save_path     = test_csv_path,
-                emb_model     = emb_model,
-                emb_sizes     = emb_sizes,
-                bin_midpoints = bin_midpoints,
-                n_num_cols    = n_num_cols,
-                num_mean      = num_mean,
-                num_std       = num_std,
-                cat_encoders  = cat_encoders,
-                device        = device,
-                oos           = True,
-            )
-
-            round_numeric_for_csv(
-                result_df     = val_result_df,
-                dataname      = dataname,
-                split_df_path = f'datasets/{dataname}/test.csv',
-                decimals      = 2,
-                save_path     = test_csv_path,
-            )
-
-            # ---- TRAIN (in-sample; file aslinya 'train.csv') ----
-            last_pred_X_train = np.load(f'{ckpt_dir}/insample_pred_{last_iter}.npy')
-
-            train_csv_path = f'{imputed_csv_dir}/train_impute_mdlp{last_iter}.csv'
-            train_result_df = save_imputed_csv_mrmd(
-                dataname      = dataname,
-                pred_X        = last_pred_X_train,
-                mask          = ori_train_mask,
-                split_df_path = f'datasets/{dataname}/train.csv',
-                save_path     = train_csv_path,
-                emb_model     = emb_model,
-                emb_sizes     = emb_sizes,
-                bin_midpoints = bin_midpoints,
-                n_num_cols    = n_num_cols,
-                num_mean      = num_mean,
-                num_std       = num_std,
-                cat_encoders  = cat_encoders,
-                device        = device,
-                oos           = False,
-            )
-
-            round_numeric_for_csv(
-                result_df     = train_result_df,
-                dataname      = dataname,
-                split_df_path = f'datasets/{dataname}/train.csv',
-                decimals      = 2,
-                save_path     = train_csv_path,
-            )
-
-            with open(f'{result_save_path}/result_mdlpwith.txt', 'a+', encoding='utf-8') as f:
-                f.write(f'[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): '
-                        f'{last_iter}, MAE_out={MAEs_out[last_iter]}, '
-                        f'RMSE_out={RMSEs_out[last_iter]}, ACC_out={ACCs_out[last_iter]}\n')
-                f.write(f'[CSV] Hasil imputasi TRAIN disimpan di: {train_csv_path}\n')
-                f.write(f'[CSV] Hasil imputasi TEST  disimpan di: {test_csv_path}\n\n')
-
-            print(f'\n[CSV] Hasil imputasi TRAIN disimpan di: {train_csv_path}')
-            print(f'[CSV] Hasil imputasi TEST  disimpan di: {test_csv_path}')
