@@ -1,0 +1,39 @@
+============================================================
+Iteration: 4
+Checkpoint dir: ckpt/adult/rate30/MCAR/5/10_50
+Loading X_miss from ckpt/adult/rate30/MCAR/5/10_50/iter_4.npy
+[INFO] X_miss shape: torch.Size([22792, 77]), range: [-8.3782, 9.3168]
+Training:  34% 3427/10001 [13:36<25:17,  4.33it/s, loss=0.228]Early stopping
+Training:  34% 3427/10001 [13:36<26:05,  4.20it/s, loss=0.228]
+Training time: 816.3410s
+In-sample imputation: 100% 10/10 [07:26<00:00, 44.64s/it]
+In-sample imputation time: 446.80s
+In-sample  → MAE=0.588008  RMSE=0.995511  ACC=0.5864291616931411
+Out-of-sample imputation: 100% 10/10 [03:25<00:00, 20.58s/it]
+Out-of-sample imputation time: 205.95s
+Out-of-sample → MAE=0.595458  RMSE=1.006628  ACC=0.5918410935497651
+
+[TIMING] Iteration 4 — Ringkasan Waktu:
+  - MRmD Discretization         : 0.0000s
+  - Embedding Training           : 446.4424s
+  - Diffusion Training           : 816.3410s
+  - In-sample Imputation         : 446.7969s
+  - Out-of-sample Imputation     : 205.9524s
+  - TOTAL (Diskrit→Imputasi)     : 1915.5327s
+Results saved to results/adult/rate30/MCAR/5/10_50
+
+============================================================
+[DONE] Semua 5 iterasi selesai.
+============================================================
+
+[CSV - iterasi terakhir] Iterasi : 4
+[INFO] MAE_out(iter 4)  : 0.5954583883285522
+[INFO] RMSE_out(iter 4) : 1.006628155708313
+[INFO] ACC_out(iter 4)  : 0.5918410935497651
+[INFO] Hasil imputasi disimpan ke: results/adult/rate30/MCAR/5/10_50/imputed_csv/test_impute_mrmd_ptvae4.csv
+[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: results/adult/rate30/MCAR/5/10_50/imputed_csv/test_impute_mrmd_ptvae4.csv
+[INFO] Hasil imputasi disimpan ke: results/adult/rate30/MCAR/5/10_50/imputed_csv/train_impute_mrmd_ptvae4.csv
+[INFO] Hasil imputasi (sudah dibulatkan) disimpan ke: results/adult/rate30/MCAR/5/10_50/imputed_csv/train_impute_mrmd_ptvae4.csv
+
+[CSV] Hasil imputasi TRAIN disimpan di: results/adult/rate30/MCAR/5/10_50/imputed_csv/train_impute_mrmd_ptvae4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/adult/rate30/MCAR/5/10_50/imputed_csv/test_impute_mrmd_ptvae4.csv
