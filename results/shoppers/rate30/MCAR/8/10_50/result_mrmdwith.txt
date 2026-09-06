@@ -43,3 +43,5 @@ iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1337.9033s
 [CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MCAR/8/10_50/imputed_csv/train_impute_mrmd4.csv
 [CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MCAR/8/10_50/imputed_csv/test_impute_mrmd4.csv
 
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+
