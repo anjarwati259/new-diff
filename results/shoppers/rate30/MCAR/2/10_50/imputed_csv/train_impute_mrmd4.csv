@@ -1,5 +1,8 @@
 Administrative,Administrative_Duration,Informational,Informational_Duration,ProductRelated,ProductRelated_Duration,BounceRates,ExitRates,PageValues,SpecialDay,Month,OperatingSystems,Browser,Region,TrafficType,VisitorType,Weekend,Revenue
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fba3a66dad58a92c562ec851c572d7250e32cedc
 3,84.25,0,0.0,52,35.0,0.0,0.05,0.0,0.0,Mar,2,2,1,2,New_Visitor,False,False
 2,0.0,0,0.0,1,0.0,0.0,0.2,0.0,0.0,May,1,2,4,3,New_Visitor,False,False
 0,147.0,0,0.0,19,900.92,0.03,0.05,0.0,0.0,May,1,1,8,1,Returning_Visitor,False,False
@@ -8631,6 +8634,7 @@ Administrative,Administrative_Duration,Informational,Informational_Duration,Prod
 1,147.0,0,0.0,41,883.14,0.0,0.03,0.0,0.0,Mar,2,2,3,2,Returning_Visitor,False,True
 2,569.83,0,0.0,127,35.0,0.01,0.05,0.15,0.0,Mar,1,2,2,2,New_Visitor,False,True
 13,147.0,9,985.48,179,11492.21,0.02,0.03,0.0,0.0,Mar,1,1,1,3,New_Visitor,False,False
+<<<<<<< HEAD
 =======
 3,84.25,0,0.0,52,1463.73,0.0,0.01,0.0,0.0,Nov,2,2,1,2,New_Visitor,False,False
 0,0.0,0,0.0,1,0.0,0.17,0.2,0.01,0.01,May,1,1,4,3,Returning_Visitor,False,False
@@ -17264,3 +17268,5 @@ Administrative,Administrative_Duration,Informational,Informational_Duration,Prod
 6,569.83,0,3.61,127,5361.45,0.01,0.02,0.15,0.0,Nov,1,1,2,2,Returning_Visitor,False,True
 13,228.31,9,985.48,179,11492.21,0.02,0.03,0.0,0.01,Nov,1,1,1,3,Returning_Visitor,False,False
 >>>>>>> bdfee1f870268bb56b02e4f91f6313c3a781b59d
+=======
+>>>>>>> fba3a66dad58a92c562ec851c572d7250e32cedc

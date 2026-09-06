@@ -1,3 +1,9 @@
+[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): 4, MAE_out=0.2870561182498932, RMSE_out=0.7053583264350891, ACC_out=0.7418204964990452
+[CSV] Hasil imputasi TRAIN disimpan di: results/shoppers/rate30/MCAR/8/10_50/imputed_csv/train_impute_mrmd4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/shoppers/rate30/MCAR/8/10_50/imputed_csv/test_impute_mrmd4.csv
+
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+
 iteration 0, MAE: in-sample=0.378282, out-of-sample=0.320274
 iteration 0, RMSE: in-sample=0.897810, out-of-sample=0.775238
 iteration 0, ACC: in-sample=0.6910803324099724, out-of-sample=0.7167409293443666
