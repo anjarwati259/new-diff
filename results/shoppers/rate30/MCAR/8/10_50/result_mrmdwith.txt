@@ -39,3 +39,7 @@ iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1337.9033s
 
 [CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
 
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+

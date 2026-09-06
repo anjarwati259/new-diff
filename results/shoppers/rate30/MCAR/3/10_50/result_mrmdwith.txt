@@ -72,3 +72,7 @@ iteration 4, Training time=569.8418s, In-sample imputation=479.5400s, Out-of-sam
 iteration 4, MRmD discretization=0.0000s, Embedding training=142.4414s, Total preprocessing (Diskrit+Emb)=142.4414s
 iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1406.3533s
 
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+
+[CSV] --save_csv False -> hasil imputasi (train & val) TIDAK disimpan ke CSV.
+
