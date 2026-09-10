@@ -37,3 +37,17 @@ iteration 4, TOTAL pipeline (Diskrit-Imputasi)=3364.2263s
 [CSV] Hasil imputasi TRAIN disimpan di: results/adult/rate60/MCAR/6/10_50/imputed_csv/train_impute_mrmd4.csv
 [CSV] Hasil imputasi TEST  disimpan di: results/adult/rate60/MCAR/6/10_50/imputed_csv/test_impute_mrmd4.csv
 
+iteration 0, MAE: in-sample=0.507815, out-of-sample=0.503060
+iteration 0, RMSE: in-sample=0.998698, out-of-sample=0.991841
+iteration 0, ACC: in-sample=0.6490444460716116, out-of-sample=0.6624802088236552
+iteration 0, Training time=1957.7170s, In-sample imputation=1173.2193s, Out-of-sample imputation=516.1723s
+iteration 0, MRmD discretization=0.0000s, Embedding training=160.9946s, Total preprocessing (Diskrit+Emb)=160.9946s
+iteration 0, TOTAL pipeline (Diskrit-Imputasi)=3808.1032s
+
+iteration 1, MAE: in-sample=0.461235, out-of-sample=0.452754
+iteration 1, RMSE: in-sample=0.948477, out-of-sample=0.936789
+iteration 1, ACC: in-sample=0.7007029362231822, out-of-sample=0.7159698746202233
+iteration 1, Training time=1957.3733s, In-sample imputation=1170.0812s, Out-of-sample imputation=515.1814s
+iteration 1, MRmD discretization=0.0000s, Embedding training=160.9946s, Total preprocessing (Diskrit+Emb)=160.9946s
+iteration 1, TOTAL pipeline (Diskrit-Imputasi)=3803.6305s
+
