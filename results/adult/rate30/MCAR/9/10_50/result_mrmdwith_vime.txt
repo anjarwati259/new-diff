@@ -1,0 +1,39 @@
+iteration 0, MAE: in-sample=0.649669, out-of-sample=0.651371
+iteration 0, RMSE: in-sample=1.169718, out-of-sample=1.154191
+iteration 0, ACC: in-sample=0.5404111466423024, out-of-sample=0.5361957921854873
+iteration 0, Training time=1684.5771s, In-sample imputation=1192.2109s, Out-of-sample imputation=526.0181s
+iteration 0, MRmD discretization=0.0000s, Embedding training=121.5793s, Total preprocessing (Diskrit+Emb)=121.5793s
+iteration 0, TOTAL pipeline (Diskrit-Imputasi)=3524.3854s
+
+iteration 1, MAE: in-sample=0.648839, out-of-sample=0.650214
+iteration 1, RMSE: in-sample=1.168533, out-of-sample=1.152746
+iteration 1, ACC: in-sample=0.5399908634079489, out-of-sample=0.5363675397166165
+iteration 1, Training time=1709.8527s, In-sample imputation=1193.6714s, Out-of-sample imputation=526.8128s
+iteration 1, MRmD discretization=0.0000s, Embedding training=121.5793s, Total preprocessing (Diskrit+Emb)=121.5793s
+iteration 1, TOTAL pipeline (Diskrit-Imputasi)=3551.9162s
+
+iteration 2, MAE: in-sample=0.648387, out-of-sample=0.650380
+iteration 2, RMSE: in-sample=1.168384, out-of-sample=1.152627
+iteration 2, ACC: in-sample=0.5400822293284605, out-of-sample=0.536281665951052
+iteration 2, Training time=1619.1859s, In-sample imputation=1192.9877s, Out-of-sample imputation=526.6597s
+iteration 2, MRmD discretization=0.0000s, Embedding training=121.5793s, Total preprocessing (Diskrit+Emb)=121.5793s
+iteration 2, TOTAL pipeline (Diskrit-Imputasi)=3460.4126s
+
+iteration 3, MAE: in-sample=0.649034, out-of-sample=0.651301
+iteration 3, RMSE: in-sample=1.169026, out-of-sample=1.153611
+iteration 3, ACC: in-sample=0.5405025125628141, out-of-sample=0.536281665951052
+iteration 3, Training time=1756.6717s, In-sample imputation=1194.8754s, Out-of-sample imputation=526.8052s
+iteration 3, MRmD discretization=0.0000s, Embedding training=121.5793s, Total preprocessing (Diskrit+Emb)=121.5793s
+iteration 3, TOTAL pipeline (Diskrit-Imputasi)=3599.9317s
+
+iteration 4, MAE: in-sample=0.649758, out-of-sample=0.651318
+iteration 4, RMSE: in-sample=1.169301, out-of-sample=1.153816
+iteration 4, ACC: in-sample=0.5400091365920512, out-of-sample=0.5361528553027051
+iteration 4, Training time=1809.3586s, In-sample imputation=1192.2558s, Out-of-sample imputation=526.3909s
+iteration 4, MRmD discretization=0.0000s, Embedding training=121.5793s, Total preprocessing (Diskrit+Emb)=121.5793s
+iteration 4, TOTAL pipeline (Diskrit-Imputasi)=3649.5846s
+
+[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): 4, MAE_out=0.6513175964355469, RMSE_out=1.1538159847259521, ACC_out=0.5361528553027051
+[CSV] Hasil imputasi TRAIN disimpan di: results/adult/rate30/MCAR/9/10_50/imputed_csv/train_impute_mrmd4.csv
+[CSV] Hasil imputasi TEST  disimpan di: results/adult/rate30/MCAR/9/10_50/imputed_csv/test_impute_mrmd_vime4.csv
+
