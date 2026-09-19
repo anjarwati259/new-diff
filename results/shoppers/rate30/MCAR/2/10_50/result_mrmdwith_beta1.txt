@@ -1,0 +1,35 @@
+iteration 0, MAE: in-sample=0.351796, out-of-sample=0.313280
+iteration 0, RMSE: in-sample=0.892599, out-of-sample=0.741238
+iteration 0, ACC: in-sample=0.6687943652671545, out-of-sample=0.6732177263969171
+iteration 0, Training time=631.9423s, In-sample imputation=456.4273s, Out-of-sample imputation=205.9476s
+iteration 0, MRmD discretization=0.0000s, Embedding training=92.4550s, Total preprocessing (Diskrit+Emb)=92.4550s
+iteration 0, TOTAL pipeline (Diskrit-Imputasi)=1386.7723s
+
+iteration 1, MAE: in-sample=0.333244, out-of-sample=0.290410
+iteration 1, RMSE: in-sample=0.852137, out-of-sample=0.694684
+iteration 1, ACC: in-sample=0.6962526825510372, out-of-sample=0.7158638407193321
+iteration 1, Training time=563.8735s, In-sample imputation=456.1887s, Out-of-sample imputation=206.0097s
+iteration 1, MRmD discretization=0.0000s, Embedding training=92.4550s, Total preprocessing (Diskrit+Emb)=92.4550s
+iteration 1, TOTAL pipeline (Diskrit-Imputasi)=1318.5270s
+
+iteration 2, MAE: in-sample=0.314275, out-of-sample=0.277065
+iteration 2, RMSE: in-sample=0.820578, out-of-sample=0.664265
+iteration 2, ACC: in-sample=0.7119352886149782, out-of-sample=0.7254977520873475
+iteration 2, Training time=524.2244s, In-sample imputation=456.4005s, Out-of-sample imputation=206.1310s
+iteration 2, MRmD discretization=0.0000s, Embedding training=92.4550s, Total preprocessing (Diskrit+Emb)=92.4550s
+iteration 2, TOTAL pipeline (Diskrit-Imputasi)=1279.2109s
+
+iteration 3, MAE: in-sample=0.309609, out-of-sample=0.277082
+iteration 3, RMSE: in-sample=0.813546, out-of-sample=0.672718
+iteration 3, ACC: in-sample=0.7190337313597095, out-of-sample=0.7346178548490687
+iteration 3, Training time=704.6179s, In-sample imputation=456.7993s, Out-of-sample imputation=206.0325s
+iteration 3, MRmD discretization=0.0000s, Embedding training=92.4550s, Total preprocessing (Diskrit+Emb)=92.4550s
+iteration 3, TOTAL pipeline (Diskrit-Imputasi)=1459.9047s
+
+iteration 4, MAE: in-sample=0.300711, out-of-sample=0.268116
+iteration 4, RMSE: in-sample=0.799101, out-of-sample=0.657785
+iteration 4, ACC: in-sample=0.7119352886149782, out-of-sample=0.7348747591522158
+iteration 4, Training time=596.0863s, In-sample imputation=456.6984s, Out-of-sample imputation=206.0929s
+iteration 4, MRmD discretization=0.0000s, Embedding training=92.4550s, Total preprocessing (Diskrit+Emb)=92.4550s
+iteration 4, TOTAL pipeline (Diskrit-Imputasi)=1351.3326s
+
