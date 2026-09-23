@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import argparse
 import warnings
 import time
+import shutil
 from tqdm import tqdm
 
 from model import MLPDiffusion, Model
@@ -33,8 +34,14 @@ parser.add_argument('--noise_std',  type=float, default=0.00,       help='Noise 
 parser.add_argument('--epochs',     type=int, default=10000,        help='Number of training epochs per iteration.')
 parser.add_argument('--resume_iter',type=int, default=0,            help='Resume from this iteration index.')
 parser.add_argument('--stop_iter',  type=int, default=None,         help='Stop after this iteration (exclusive). Jika None, jalan sampai max_iter.')
-parser.add_argument('--save_csv', type=str, default='True', choices=['True', 'False'],
+parser.add_argument('--save_csv', type=str, default='False', choices=['True', 'False'],
                      help='True: simpan hasil imputasi (iterasi terbaik out-of-sample) ke CSV. False: tidak disimpan.')
+
+parser.add_argument('--clean_ckpt', type=str, default='end', choices=['none', 'start', 'end'],
+                    help="Hapus folder ckpt RUN INI SAJA (dataname/rate/mask/split_idx/"
+                         "num_trials_num_steps). 'start': hapus sebelum training (hanya "
+                         "jika resume_iter=0). 'end': hapus setelah SEMUA iterasi & CSV "
+                         "selesai. 'none': tidak dihapus.")
 
 args = parser.parse_args()
 args.save_csv = (args.save_csv == 'True')
@@ -118,7 +125,8 @@ if __name__ == '__main__':
     #  extend_train_mask shape sudah cocok dengan train_X (total_emb_dim).
     # =========================================================================
     mean_X, std_X = mean_std(train_X, extend_train_mask)
-    std_X[std_X == 0] = 1.0
+    # [FIX-COLLAPSE] std hampir nol (laten hampir konstan) jangan dibagi -> ledakan noise
+    std_X[std_X < 1e-3] = 1.0
     in_dim = train_X.shape[1]
 
     X      = torch.tensor((train_X - mean_X) / std_X / 2,
@@ -135,6 +143,34 @@ if __name__ == '__main__':
     # [MODIFIKASI] len_num = 0 karena tidak ada kolom raw numerik di train_X.
     # Seluruh isi train_X adalah embedding (numerik bin + kategorikal).
     len_num = 0
+
+    # =========================================================================
+    #  [CLEAN-CKPT] Folder checkpoint KHUSUS run ini (sesuai dataname, ratio,
+    #  mask_type, split_idx, num_trials, num_steps). Run lain tidak disentuh.
+    # =========================================================================
+    run_ckpt_dir = (f'ckpt/{dataname}/rate{ratio}/{mask_type}/'
+                    f'{split_idx}/{num_trials}_{num_steps}')
+
+    def clean_run_ckpt(path, when):
+        """Hapus HANYA folder ckpt run ini, dengan pengecekan keamanan path."""
+        norm = os.path.normpath(path)
+        parts = norm.split(os.sep)
+        # harus persis: ckpt/<data>/rate<r>/<mask>/<split>/<trials>_<steps>
+        if parts[0] != 'ckpt' or len(parts) != 6:
+            print(f'[CLEAN-CKPT] Path tidak sesuai pola, batal hapus: {norm}')
+            return
+        if os.path.isdir(norm):
+            shutil.rmtree(norm)
+            print(f'[CLEAN-CKPT] ({when}) Folder ckpt run ini dihapus: {norm}')
+        else:
+            print(f'[CLEAN-CKPT] ({when}) Folder tidak ada, tidak ada yang dihapus: {norm}')
+
+    if args.clean_ckpt == 'start':
+        if args.resume_iter == 0:
+            clean_run_ckpt(run_ckpt_dir, 'start')
+        else:
+            print(f'[CLEAN-CKPT] resume_iter={args.resume_iter} -> ckpt TIDAK dihapus '
+                  f'(dibutuhkan iter_{args.resume_iter}.npy untuk melanjutkan).')
 
     MAEs,  RMSEs,  ACCs  = [], [], []
     MAEs_out, RMSEs_out, ACCs_out = [], [], []
@@ -208,7 +244,7 @@ if __name__ == '__main__':
 
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=0)
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.9,
-                                      patience=50, verbose=False)
+                                      patience=50)
 
         model.train()
         best_loss = float('inf')
@@ -438,7 +474,7 @@ if __name__ == '__main__':
         print(f'  - Out-of-sample Imputation     : {t_impute_out:.4f}s')
         print(f'  - TOTAL (Diskrit→Imputasi)     : {t_total_pipeline:.4f}s')
 
-        with open(f'{result_save_path}/result_mrmdwith_ptvae.txt', 'a+', encoding='utf-8') as f:
+        with open(f'{result_save_path}/result_mrmd_ptvae_percell.txt', 'a+', encoding='utf-8') as f:
             f.write(
                 f'iteration {iteration}, '
                 f'MAE: in-sample={mae:.6f}, out-of-sample={mae_out:.6f}\n'
@@ -483,6 +519,9 @@ if __name__ == '__main__':
         print(f'[NEXT] Lakukan Save Version (Run All), lalu lanjut dengan:')
         print(f'       --resume_iter {next_iter} --stop_iter {min(next_iter + (iter_end - args.resume_iter), args.max_iter)}')
         print(f'{"="*60}')
+        if args.clean_ckpt == 'end':
+            print('[CLEAN-CKPT] Run belum sampai max_iter -> ckpt TIDAK dihapus '
+                  '(dibutuhkan untuk resume).')
     else:
         print(f'\n{"="*60}')
         print(f'[DONE] Semua {args.max_iter} iterasi selesai.')
@@ -588,7 +627,7 @@ if __name__ == '__main__':
                 save_path     = train_csv_path,
             )
 
-            with open(f'{result_save_path}/result_mrmdwith_ptvae.txt', 'a+', encoding='utf-8') as f:
+            with open(f'{result_save_path}/result_mrmd_ptvae_percell.txt', 'a+', encoding='utf-8') as f:
                 f.write(f'[CSV] Iterasi dipakai utk CSV (iterasi TERAKHIR, fixed): '
                         f'{last_iter}, MAE_out={MAEs_out[last_iter]}, '
                         f'RMSE_out={RMSEs_out[last_iter]}, ACC_out={ACCs_out[last_iter]}\n')
@@ -597,3 +636,8 @@ if __name__ == '__main__':
 
             print(f'\n[CSV] Hasil imputasi TRAIN disimpan di: {train_csv_path}')
             print(f'[CSV] Hasil imputasi TEST  disimpan di: {test_csv_path}')
+
+        # [CLEAN-CKPT] Hapus di AKHIR: hanya setelah SEMUA iterasi selesai
+        # (dan CSV, jika diaktifkan, sudah dibuat dari oos_pred/insample_pred).
+        if args.clean_ckpt == 'end':
+            clean_run_ckpt(run_ckpt_dir, 'end')

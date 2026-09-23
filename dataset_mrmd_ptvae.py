@@ -245,11 +245,24 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
                 x_vl_j_obs = x_vl_j
                 y_tr_obs   = y_tr
 
+            # [FIX-LEAKAGE-FALLBACK] Dulu: kalau tidak ada observed, fallback
+            # ke SEMUA data (termasuk nilai asli di posisi missing) -> leakage.
+            # Sekarang: kolom tanpa observed di train -> 1 bin (tanpa cut point).
+            # Kalau val tidak punya observed -> pakai train observed sbg val
+            # (JS-divergence = 0, kriteria jadi murni relevansi), tetap tanpa
+            # menyentuh nilai missing.
             if len(x_tr_j_obs) == 0:
-                x_tr_j_obs = x_tr_j
-                y_tr_obs   = y_tr
+                print(f'  [MRmD][WARN] Col {j}: tidak ada nilai observed di train '
+                      f'-> 1 bin (tanpa fallback ke data missing).')
+                self.x_min_.append(0.0)
+                self.x_max_.append(0.0)
+                self.cut_points_.append(np.array([]))
+                self.n_bins_.append(1)
+                continue
             if len(x_vl_j_obs) == 0:
-                x_vl_j_obs = x_vl_j
+                print(f'  [MRmD][WARN] Col {j}: tidak ada nilai observed di val '
+                      f'-> val diganti train observed.')
+                x_vl_j_obs = x_tr_j_obs
 
             x_min = float(x_tr_j_obs.min())
             x_max = float(x_tr_j_obs.max())
@@ -343,7 +356,9 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
 
     def get_bin_midpoints(self, X_norm: np.ndarray,
                           X_norm_binned: np.ndarray,
-                          missing_mask: np.ndarray = None) -> list:
+                          missing_mask: np.ndarray = None,
+                          num_mean: np.ndarray = None,
+                          num_std: np.ndarray = None) -> list:
         """
         Hitung nilai tengah (midpoint) setiap bin dalam skala normalisasi.
 
@@ -357,8 +372,9 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
 
         Return : list[n_cols] of np.ndarray, tiap elemen panjang n_bins_[col]
         """
-        n_cols    = X_norm.shape[1]
-        midpoints = []
+        n_cols     = X_norm.shape[1]
+        midpoints  = []
+        n_fallback = 0
 
         if missing_mask is not None:
             missing_mask = np.array(missing_mask, dtype=bool)
@@ -377,15 +393,24 @@ class MRmDDiscretizer(BaseEstimator, TransformerMixin):
                 if mask.sum() > 0:
                     mids[b] = float(X_norm[mask, col].mean())
                 else:
-                    # Bin kosong (setelah exclude missing) → fallback ke
-                    # semua baris di bin tsb, lalu interpolasi linear.
-                    mask_all = (X_norm_binned[:, col] == b)
-                    if mask_all.sum() > 0:
-                        mids[b] = float(X_norm[mask_all, col].mean())
-                    else:
-                        mids[b] = float(b) / max(n_bins - 1, 1)
+                    # [FIX-LEAKAGE-FALLBACK] Dulu: bin kosong (setelah exclude
+                    # missing) -> rata-rata SEMUA baris di bin itu, termasuk
+                    # nilai asli di posisi missing -> leakage. Sekarang: titik
+                    # tengah GEOMETRIS bin dari cut point (skala asli), lalu
+                    # dinormalisasi -- tidak menyentuh nilai missing.
+                    n_fallback += 1
+                    edges = _make_bins(self.cut_points_[col],
+                                       self.x_min_[col], self.x_max_[col])
+                    center = 0.5 * (edges[b] + edges[b + 1])
+                    if num_mean is not None and num_std is not None:
+                        center = (center - num_mean[col]) / num_std[col]
+                    mids[b] = float(center)
 
             midpoints.append(mids)
+
+        if n_fallback > 0:
+            print(f'[MRmD] {n_fallback} bin tanpa nilai observed -> midpoint '
+                  f'memakai titik tengah cut point (tanpa data missing).')
 
         return midpoints
 
@@ -705,6 +730,48 @@ class PTVAEEmbeddingModel(nn.Module):
         per_col = torch.split(z, self.emb_sizes, dim=1)
         return [self.decoders[i](per_col[i]) for i in range(self.n_cols)]
 
+    # ── [OPSI-1] Ruang embedding PER SEL (tidak tercampur antar kolom) ──
+    #  Ruang diffusion = concat baris tabel nn.Embedding per kolom, BUKAN
+    #  z_fused. Embedding sel (i, j) HANYA bergantung pada nilai sel itu,
+    #  sehingga extend_mask per kolom benar-benar sinkron: potongan kolom j
+    #  = kolom j, dan potongan observed tidak berubah karena pola missing
+    #  kolom lain. PT-VAE hanya berperan melatih tabel embedding ini.
+
+    def set_valid_rows(self, valid_rows: list):
+        """
+        Tandai baris tabel embedding yang PERNAH teramati (observed) di train.
+        Baris yang tidak pernah teramati (mis. token __unknown__, kategori yang
+        hanya muncul di posisi missing) tidak pernah dilatih -> nilainya acak,
+        jadi dikecualikan dari decoding nearest-neighbor.
+        valid_rows : list[n_cols] of bool array, panjang = cat_dims_decode[i]
+        """
+        dev = self.embeddings[0].weight.device
+        for i, v in enumerate(valid_rows):
+            self.register_buffer(f'valid_rows_{i}',
+                                 torch.as_tensor(np.asarray(v), dtype=torch.bool, device=dev))
+
+    def embed_cells(self, x_cat: torch.Tensor) -> torch.Tensor:
+        """x_cat [B, n_cols] -> [B, total_emb_dim] (lookup per kolom, tanpa MLP)."""
+        return self._embed_input(x_cat)
+
+    def decode_cells(self, x: torch.Tensor) -> list:
+        """
+        Decode ruang embedding per sel -> logits per kolom.
+        logits[b, k] = -||x_j[b] - E_j[k]||^2  (nearest neighbor ke tabel
+        embedding kolom j, TANPA baris token missing & baris tak teramati).
+        return : list[n_cols] of [B, cat_dims_decode[j]]
+        """
+        per_col = torch.split(x, self.emb_sizes, dim=1)
+        logits_all = []
+        for i in range(self.n_cols):
+            table  = self.embeddings[i].weight[:self.cat_dims_decode[i]]   # [n_cat, emb]
+            logits = -torch.cdist(per_col[i], table).pow(2)                 # [B, n_cat]
+            valid  = getattr(self, f'valid_rows_{i}', None)
+            if valid is not None:
+                logits = logits.masked_fill(~valid.unsqueeze(0), float('-inf'))
+            logits_all.append(logits)
+        return logits_all
+
     def decode_prior(self, c_concept: torch.Tensor) -> list:
         """Prior Concept Decoder: c_concept → per-kolom logits. Utk L_recon (Eq. 12)."""
         return self._logits_from_recon(self._decode_prior_concept(c_concept))
@@ -813,7 +880,11 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
                                      encoder_ratio: float = 1.5,
                                      patience: int = 30,
                                      mask_array: np.ndarray = None,
-                                     tau: float = 1.0) -> PTVAEEmbeddingModel:
+                                     tau: float = 1.0,
+                                     kl_weight: float = 0.1,
+                                     kl_warmup_epochs: int = 30,
+                                     aux_weight: float = 0.1,
+                                     class_weight: float = 1.0) -> PTVAEEmbeddingModel:
     """
     Latih PTVAEEmbeddingModel dengan loss PT-VAE sesuai Liu et al. (2025)
     (lihat train_vae_embedding_model pada dataset_mrmdwith_ptvae.py untuk
@@ -834,6 +905,26 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
              L_recon, L_KL, L_class) TIDAK di-mask — semuanya regularizer
              representasi laten / label per-baris, bukan perbandingan
              langsung ke nilai fitur x tertentu.
+
+    [FIX-COLLAPSE] Perbaikan agar laten tidak collapse (posterior collapse):
+      1) Reconstruction CE (elbo_recon) DIJUMLAH antar kolom (log-likelihood
+         benar), bukan dirata-rata. Sebelumnya CE dirata-rata antar kolom
+         (~1-2 nat) sedangkan KL(z) dijumlah antar dimensi laten (puluhan
+         dimensi, bobot 1) -> menyimpan informasi di z lebih 'mahal' daripada
+         keuntungan rekonstruksi, sehingga solusi optimalnya = laten konstan.
+      2) KL(z) & KL(c) diberi bobot kl_weight dengan pemanasan linear
+         (kl_warmup_epochs epoch) -> KL annealing.
+      3) Komponen konsistensi PT-VAE (L_recon Eq.12 & L_KL Eq.13) diberi
+         bobot aux_weight (< 1). L_recon = MSE antara logit decoder utama dan
+         decoder prior; karena c_concept cenderung konstan (KL(c) menariknya
+         ke 0.5), term ini menarik output decoder utama ke konstan.
+      4) Pemilihan checkpoint & early stopping memakai loss TANPA KL/aux
+         (recon observed-only + class), dihitung hanya SETELAH pemanasan.
+         Sebelumnya total loss (yang memuat KL) dipakai, sehingga solusi
+         collapse (KL ~ 0) justru terpilih sebagai 'terbaik'.
+      5) Diagnostik memakai std ANTAR-BARIS (bukan std seluruh elemen setelah
+         LayerNorm, yang selalu ~1 walau semua baris identik), active units,
+         dan perbandingan dengan baseline kelas mayoritas.
 
     Return : PTVAEEmbeddingModel (parameter di-freeze, eval mode)
     """
@@ -905,6 +996,9 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
 
     model.train()
     for epoch in range(n_epochs):
+        # [FIX-COLLAPSE] bobot KL dengan pemanasan linear 0 -> kl_weight
+        kl_w = kl_weight * min(1.0, (epoch + 1) / max(1, kl_warmup_epochs))
+        total_sel         = 0.0
         total_loss        = 0.0
         total_elbo_recon  = 0.0
         total_kl_z        = 0.0
@@ -951,14 +1045,15 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
                         per_elem = ce_loss_noreduce(recon_logits[i], batch_cat[:, i])
                         col_losses.append(per_elem[obs_i].mean())
                 if len(col_losses) > 0:
-                    elbo_recon = sum(col_losses) / len(col_losses)
+                    # [FIX-COLLAPSE] JUMLAH antar kolom (bukan rata-rata)
+                    elbo_recon = sum(col_losses)
                 else:
                     elbo_recon = torch.tensor(0.0, device=device)
             else:
                 elbo_recon = sum(
                     ce_loss(recon_logits[i], batch_cat[:, i])
                     for i in range(model.n_cols)
-                ) / model.n_cols
+                )
 
             # Term 2: KL(q(z|x) || p(z)) — Eq. 9, closed-form, ALWAYS POSITIVE
             kl_z = PTVAEEmbeddingModel.kl_divergence(mu, log_var)
@@ -966,8 +1061,9 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             # Term 3: KL(q(c|x) || p(c)) — Eq. 11, ALWAYS POSITIVE
             kl_c = PTVAEEmbeddingModel.kl_divergence_c(c_concept, K)
 
-            # L_ELBO (bentuk minimisasi): elbo_recon + KL_z + KL_c
-            l_elbo = elbo_recon + kl_z + kl_c
+            # L_ELBO (bentuk minimisasi): elbo_recon + w_KL * (KL_z + KL_c)
+            # [FIX-COLLAPSE] w_KL = kl_weight * pemanasan linear (KL annealing)
+            l_elbo = elbo_recon + kl_w * (kl_z + kl_c)
 
             # ── L_recon (Eq. 12) — TIDAK di-mask, bukan perbandingan ke x ──
             l_recon = PTVAEEmbeddingModel.reconstruction_loss_concept(
@@ -982,8 +1078,11 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             # ── L_class (auxiliary) — TIDAK di-mask, label per-baris ───────
             class_loss = ce_loss(class_logits, batch_labels)
 
-            # ── Total Loss (Eq. 14) ───────────────────────────────────────
-            loss = l_elbo + l_recon + l_kl + class_loss
+            # ── Total Loss (Eq. 14, dengan bobot) ─────────────────────────
+            # [FIX-COLLAPSE] l_recon (Eq.12) & l_kl (Eq.13) diberi aux_weight.
+            loss = (l_elbo
+                    + aux_weight * (l_recon + l_kl)
+                    + class_weight * class_loss)
 
             # Guard NaN: skip batch jika ada komponen NaN
             if not torch.isfinite(loss):
@@ -1003,6 +1102,7 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             optimizer.step()
 
             total_loss       += loss.item()
+            total_sel        += (elbo_recon + class_weight * class_loss).item()
             total_elbo_recon += elbo_recon.item()
             total_kl_z       += kl_z.item()
             total_kl_c       += kl_c.item()
@@ -1013,6 +1113,7 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
             n_batches        += 1
 
         avg_loss        = total_loss        / n_batches
+        avg_sel         = total_sel         / n_batches
         avg_elbo_recon  = total_elbo_recon  / n_batches
         avg_kl_z        = total_kl_z        / n_batches
         avg_kl_c        = total_kl_c        / n_batches
@@ -1024,7 +1125,7 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
         if (epoch + 1) % 10 == 0:
             print(
                 f'[PT-VAE] Epoch {epoch+1:>4}/{n_epochs} | '
-                f'Loss={avg_loss:.4f} | '
+                f'Loss={avg_loss:.4f} | Sel(recon+class)={avg_sel:.4f} | KLw={kl_w:.3f} | '
                 f'L_ELBO={avg_l_elbo:.4f} '
                 f'[CE(obs-only)={avg_elbo_recon:.4f}, KL(z)={avg_kl_z:.4f}, KL(c)={avg_kl_c:.4f}] | '
                 f'L_recon={avg_recon_loss:.4f} | '
@@ -1047,17 +1148,21 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
                 print(f'  [WARN] {dominant}={losses[dominant]:.4f} mendominasi loss '
                       f'(target masing-masing komponen ≈ 0.1–1.0)')
 
-        if avg_loss < best_loss:
-            best_loss        = avg_loss
-            patience_counter = 0
-            best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-        else:
-            patience_counter += 1
+        # [FIX-COLLAPSE] Checkpoint & early stopping memakai loss TANPA KL/aux
+        # (recon observed-only + class), dan baru dihitung setelah pemanasan
+        # (selama pemanasan bobot KL berubah sehingga loss tidak sebanding).
+        if (epoch + 1) > kl_warmup_epochs:
+            if avg_sel < best_loss:
+                best_loss        = avg_sel
+                patience_counter = 0
+                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            else:
+                patience_counter += 1
 
-        if patience_counter >= patience:
-            print(f'[PT-VAE Embedding] Early stopping triggered at epoch {epoch+1}')
-            print(f'[PT-VAE Embedding] Best total loss: {best_loss:.4f}')
-            break
+            if patience_counter >= patience:
+                print(f'[PT-VAE Embedding] Early stopping triggered at epoch {epoch+1}')
+                print(f'[PT-VAE Embedding] Best selection loss (recon+class): {best_loss:.4f}')
+                break
 
     if best_model_state is not None:
         model.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
@@ -1074,6 +1179,19 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
         print(f'  mean={z_sample.mean().item():.4f}  '
               f'std={z_sample.std().item():.4f}  '
               f'norm_mean={z_sample.norm(dim=1).mean().item():.4f}')
+
+        # [FIX-COLLAPSE] std seluruh elemen setelah LayerNorm selalu ~1 walau
+        # semua baris identik, jadi TIDAK bisa mendeteksi collapse. Yang dicek:
+        # std ANTAR-BARIS per dimensi, dan jumlah active units (var(mu) > 0.01).
+        row_std = z_sample.std(dim=0).mean().item()
+        mu_s, _, _ = model._encode_to_params(model._embed_input(sample_cat))
+        active_units = int((mu_s.var(dim=0) > 0.01).sum().item())
+        print(f'  std ANTAR-BARIS (rata-rata dimensi)={row_std:.4f}  '
+              f'active units={active_units}/{model.latent_dim}')
+        if row_std < 0.05 or active_units == 0:
+            print('  [WARN] Laten hampir konstan antar-baris -> kemungkinan '
+                  'COLLAPSE. Turunkan kl_weight / aux_weight atau perpanjang '
+                  'kl_warmup_epochs.')
 
     # ── Evaluasi reconstruction accuracy (diagnostik, observed-only) ──────
     if mask_array is not None:
@@ -1094,8 +1212,18 @@ def train_supervised_embedding_model(cat_idx_array: np.ndarray,
                 correct_total += (pred_i[obs_i] == true_i[obs_i]).sum().item()
                 total_count   += int(obs_i.sum().item())
             acc = correct_total / max(total_count, 1)
+
+            # [FIX-COLLAPSE] pembanding: akurasi kalau selalu menebak kelas
+            # mayoritas tiap kolom (observed-only). Kalau acc ~ maj_acc, laten
+            # tidak membawa informasi baris.
+            maj_correct = 0
+            for i in range(model.n_cols):
+                v = eval_cat[:, i][eval_observed[:, i]]
+                if v.numel() > 0:
+                    maj_correct += int(torch.bincount(v).max().item())
+            maj_acc = maj_correct / max(total_count, 1)
             print(f'[PT-VAE Embedding] Reconstruction accuracy (observed-only, '
-                  f'N={eval_n}): {acc:.4f}')
+                  f'N={eval_n}): {acc:.4f}  |  baseline kelas mayoritas: {maj_acc:.4f}')
 
     for param in model.parameters():
         param.requires_grad_(False)
@@ -1122,12 +1250,12 @@ def encode_with_embedding(model: PTVAEEmbeddingModel,
     z_fused = mu + c_concept secara deterministik — tanpa sampling dan
     tanpa Gumbel noise.
 
-    [PENTING] Dipanggil TANPA substitusi token missing — dipakai untuk
-    membangun train_X/test_X ground-truth (X_true) di load_dataset(), yang
-    MEMANG harus memakai nilai asli (bukan token missing), karena X_true
-    dipakai sebagai target evaluasi imputasi, bukan sebagai sinyal training
-    embedding. Fix-leakage hanya relevan saat TRAINING model embedding
-    (lihat train_supervised_embedding_model), bukan di sini.
+    [FIX-LEAKAGE-INPUT] Fungsi ini TIDAK melakukan substitusi token missing.
+    Untuk input imputasi (train_X/test_X), pemanggil HARUS memberi indeks yang
+    posisi missing-nya sudah diganti token 'missing' (lihat load_dataset()).
+    Memberi baris LENGKAP membuat slice observed membawa informasi sel yang
+    di-mask (encoder mencampur semua kolom). Ground truth evaluasi tidak
+    diambil dari embedding, melainkan dari truth_all_idx / num_true_norm.
 
     Output shape: [N, latent_dim] = [N, total_emb_dim].
     """
@@ -1150,6 +1278,26 @@ def encode_with_embedding(model: PTVAEEmbeddingModel,
             all_z.append(z.cpu().numpy())
 
     return np.concatenate(all_z, axis=0).astype(np.float32)
+
+
+def encode_cells_with_embedding(model: PTVAEEmbeddingModel,
+                                cat_idx_array: np.ndarray,
+                                device: str,
+                                batch_size: int = 4096) -> np.ndarray:
+    """
+    [OPSI-1] Encode integer index -> ruang embedding PER SEL (lookup tabel
+    nn.Embedding per kolom, TANPA MLP encoder). Posisi missing sebaiknya
+    sudah diganti token 'missing' oleh pemanggil; potongannya toh di-nol-kan
+    DiffPuter lewat mask.
+    Output shape: [N, total_emb_dim] = [N, sum(emb_sizes)].
+    """
+    model.eval()
+    cat_tensor = torch.tensor(cat_idx_array, dtype=torch.long, device=device)
+    out = []
+    with torch.no_grad():
+        for s in range(0, len(cat_tensor), batch_size):
+            out.append(model.embed_cells(cat_tensor[s:s + batch_size]).cpu().numpy())
+    return np.concatenate(out, axis=0).astype(np.float32)
 
 
 def decode_cat_from_embedding(model: PTVAEEmbeddingModel,
@@ -1179,7 +1327,7 @@ def decode_cat_from_embedding(model: PTVAEEmbeddingModel,
     all_pred = []
     with torch.no_grad():
         for (batch,) in loader:
-            recon_logits = model.decode(batch)
+            recon_logits = model.decode_cells(batch)   # [OPSI-1] nearest-neighbor per kolom
             pred_idx = torch.stack([
                 torch.argmax(logits, dim=1)
                 for logits in recon_logits
@@ -1233,7 +1381,7 @@ def decode_num_from_embedding(model: PTVAEEmbeddingModel,
     all_preds = []
     with torch.no_grad():
         for (batch,) in loader:
-            recon_logits = model.decode(batch)  # list[n_cols] of [B, vocab_size_i]
+            recon_logits = model.decode_cells(batch)  # [OPSI-1] list[n_cols] of [B, vocab_size_i]
 
             batch_num_preds = []
             for col in range(n_num_cols):
@@ -1467,7 +1615,8 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
 
         # Bin midpoints dalam skala NORMALISASI, DIHITUNG DARI TRAIN_FULL
         bin_midpoints = mrmd.get_bin_midpoints(
-            full_train_num_norm, full_train_num_bin, missing_mask=full_train_num_mask
+            full_train_num_norm, full_train_num_bin, missing_mask=full_train_num_mask,
+            num_mean=num_mean, num_std=num_std,
         )
 
         print(f'[MRmD] n_bins per kolom: {mrmd.n_bins_}')
@@ -1615,6 +1764,10 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
         patience      = 40,
         mask_array    = train_all_mask,    # [FIX-LEAKAGE] mask TRAIN_FULL — posisi missing → token missing + dikecualikan dari CE pada L_ELBO
         tau           = 1.0,               # temperature Gumbel-Softmax (paper: mencegah c_concept saturated)
+        kl_weight        = 0.1,            # [FIX-COLLAPSE] bobot KL(z)+KL(c) setelah pemanasan
+        kl_warmup_epochs = 30,             # [FIX-COLLAPSE] pemanasan linear KL (epoch)
+        aux_weight       = 0.1,            # [FIX-COLLAPSE] bobot L_recon (Eq.12) & L_KL (Eq.13)
+        class_weight     = 1.0,            # bobot L_class (auxiliary)
     )
     t_emb_end = time.time()
     t_emb = t_emb_end - t_emb_start
@@ -1623,14 +1776,49 @@ def load_dataset(dataname, idx=0, mask_type='MCAR', ratio='30', noise_std=0.01):
 
     # ── Encode TRAIN_FULL & TEST → embedding vector, memakai embedding
     #    model yang BARU SAJA dilatih & di-freeze di atas ───────────────────
-    # [PENTING] encode_with_embedding TIDAK menerapkan substitusi token
-    # missing — train_X/test_X di sini dibangun dari nilai ASLI (x_clean),
-    # karena keduanya dipakai sebagai ground-truth (X_true) utk evaluasi
-    # imputasi, BUKAN sebagai sinyal training embedding. Fix-leakage sudah
-    # selesai dilakukan di TAHAP TRAINING embedding model (di atas).
-    train_all_emb = encode_with_embedding(emb_model, train_all_idx, device)
-    test_all_emb  = encode_with_embedding(emb_model, test_all_idx,  device)
-    # shape: [N, latent_dim] = [N, total_emb_dim] = [N, sum(emb_sizes)]
+    # [FIX-LEAKAGE-INPUT] Input encoder untuk imputasi dibentuk hanya dari nilai
+    # OBSERVED: posisi missing diganti TOKEN 'missing' (indeks = all_dims[j],
+    # baris ekstra tabel nn.Embedding yang dibuat saat training) SEBELUM encode.
+    # Encoder PT-VAE mencampur semua kolom, jadi encoding baris LENGKAP membuat
+    # slice observed membawa informasi sel yang di-mask. Ground truth evaluasi
+    # tetap dari truth_all_idx / num_true_norm (bukan dari embedding).
+    missing_tok  = np.array(all_dims, dtype=np.int64)
+    train_idx_in = np.where(train_all_mask, missing_tok[None, :], train_all_idx)
+    test_idx_in  = np.where(test_all_mask,  missing_tok[None, :], test_all_idx)
+
+    # [OPSI-1] Baris tabel embedding yang pernah teramati di TRAIN (observed).
+    # Hanya baris ini yang boleh jadi hasil decode nearest-neighbor.
+    valid_rows = []
+    for j, d in enumerate(all_dims):
+        obs_vals = train_all_idx[~train_all_mask[:, j], j]
+        v = np.zeros(d, dtype=bool)
+        if obs_vals.size > 0:
+            v[np.unique(obs_vals)] = True
+        else:
+            v[:] = True
+        valid_rows.append(v)
+    emb_model.set_valid_rows(valid_rows)
+
+    # [OPSI-1] Ruang diffusion = embedding PER SEL (lookup tabel, tanpa MLP
+    # encoder PT-VAE), sehingga potongan kolom j hanya berisi kolom j.
+    train_all_emb = encode_cells_with_embedding(emb_model, train_idx_in, device)
+    test_all_emb  = encode_cells_with_embedding(emb_model, test_idx_in,  device)
+    # shape: [N, total_emb_dim] = [N, sum(emb_sizes)]
+
+    # [OPSI-1] Sanity check round-trip: sel OBSERVED yang di-encode lalu
+    # di-decode harus kembali ke index aslinya (idealnya ~1.0). Kalau rendah,
+    # tabel embedding punya baris yang saling berdempetan.
+    rt_pred = decode_cat_from_embedding(emb_model, train_all_emb, device)
+    obs = ~train_all_mask
+    rt_acc = (rt_pred[obs] == train_all_idx[obs]).mean() if obs.any() else float('nan')
+    print(f'[OPSI-1] Round-trip decode (observed train): {rt_acc:.4f}')
+    for j in range(len(all_dims)):
+        o = obs[:, j]
+        if o.any():
+            a = (rt_pred[o, j] == train_all_idx[o, j]).mean()
+            if a < 0.99:
+                print(f'  [WARN] kolom {j}: round-trip={a:.4f} (n_rows={all_dims[j]}, '
+                      f'emb_size={emb_sizes[j]})')
 
     train_X = train_all_emb
     test_X  = test_all_emb
